@@ -232,6 +232,14 @@ def load_campaign_products(preset, d_from, d_to, src):
 
 
 @st.cache_data(ttl=300, show_spinner=False)
+def load_meta_campaign_products(preset, d_from, d_to, src):
+    return get_windsor_data(
+        ["session_manual_campaign_name", "item_name", "item_id", "item_revenue", "items_purchased", "item_price"],
+        preset, d_from, d_to, source=src
+    )
+
+
+@st.cache_data(ttl=300, show_spinner=False)
 def load_meta_campaigns(preset, d_from, d_to, src):
     return get_windsor_data(["session_manual_campaign_name", "sessions", "purchase_revenue", "transactions", "add_to_carts"], preset, d_from, d_to, source=src)
 
@@ -841,6 +849,17 @@ elif active_tab == "Campaigns":
     with st.spinner("Loading Meta campaigns..."):
         df_meta = load_meta_campaigns(date_preset, _d_from, _d_to, source_filter)
 
+    with st.expander("🔍 Debug — هل دي Web + App ولا Web بس؟"):
+        if "source" in df_meta.columns:
+            st.write("Rows per source:", df_meta["source"].value_counts().to_dict())
+            if "sessions" in df_meta.columns:
+                tmp = df_meta.copy()
+                tmp["sessions"] = tmp["sessions"].apply(safe_num)
+                st.write("Sessions per source:", tmp.groupby("source")["sessions"].sum().to_dict())
+        else:
+            st.warning("⚠️ مفيش عمود source — البيانات مش متفلترة بـ source.")
+        st.dataframe(df_meta.head(10))
+
     if not df_meta.empty and "session_manual_campaign_name" in df_meta.columns:
         for col in ["sessions", "purchase_revenue", "transactions", "add_to_carts"]:
             if col in df_meta.columns:
@@ -879,6 +898,67 @@ elif active_tab == "Campaigns":
                 badge = '<span class="badge badge-green">الأقوى</span>' if cv >= 1 else ('<span class="badge badge-amber">راجع</span>' if cv >= 0.4 else '<span class="badge badge-red">ضعيف</span>')
                 rows.append(f"<tr><td style='font-size:11px'>{r['session_manual_campaign_name']}</td><td>{fmt_number(r['sessions'])}</td><td><b style='color:#1877F2'>{fmt_currency(r['purchase_revenue'])}</b></td><td>{int(r['transactions'])}</td><td>{fmt_pct(cv,2)}</td><td>{fmt_currency(r['aov'],0)}</td><td>{badge}</td></tr>")
             st.markdown(f"<table class='styled-table'><thead><tr><th>Campaign</th><th>Sessions</th><th>Revenue</th><th>Orders</th><th>CVR</th><th>AOV</th><th>Rating</th></tr></thead><tbody>{''.join(rows)}</tbody></table>", unsafe_allow_html=True)
+
+            # ── Products sold per campaign — drill-down table ──────────────
+            st.markdown("<div style='height:24px'></div>", unsafe_allow_html=True)
+            st.markdown(section_header("Products by Campaign", "إيه اللي باع من كل كامبين؟", "#1877F2"), unsafe_allow_html=True)
+
+            campaign_options = df_meta_f["session_manual_campaign_name"].tolist()
+            sel_campaign = st.selectbox("اختار الكامبين", campaign_options, key="meta_campaign_dd")
+
+            with st.spinner("Loading products for this campaign..."):
+                df_camp_prod = load_meta_campaign_products(date_preset, _d_from, _d_to, source_filter)
+
+            if not df_camp_prod.empty and "session_manual_campaign_name" in df_camp_prod.columns:
+                for col in ["item_revenue", "items_purchased", "item_price"]:
+                    if col in df_camp_prod.columns:
+                        df_camp_prod[col] = df_camp_prod[col].apply(safe_num)
+
+                dcp = df_camp_prod[df_camp_prod["session_manual_campaign_name"] == sel_campaign].copy()
+
+                group_cols = ["item_name"]
+                if "item_id" in dcp.columns:
+                    group_cols.append("item_id")
+
+                agg_dict = {"item_revenue": "sum", "items_purchased": "sum"}
+                if "item_price" in dcp.columns:
+                    agg_dict["item_price"] = "mean"
+
+                dcp_agg = dcp.groupby(group_cols, as_index=False).agg(agg_dict)
+                dcp_agg = dcp_agg[dcp_agg["item_revenue"] > 0].sort_values("item_revenue", ascending=False)
+
+                if not dcp_agg.empty:
+                    tot_camp_rev = dcp_agg["item_revenue"].sum()
+                    tot_camp_units = dcp_agg["items_purchased"].sum()
+
+                    pc1, pc2, pc3 = st.columns(3)
+                    with pc1: st.markdown(kpi_card("Campaign Product Revenue", fmt_currency(tot_camp_rev), sel_campaign[:30], "up", accent_color="#1877F2"), unsafe_allow_html=True)
+                    with pc2: st.markdown(kpi_card("Units Sold", fmt_number(tot_camp_units), "من هذا الكامبين", "neu", accent_color="#3266AD"), unsafe_allow_html=True)
+                    with pc3: st.markdown(kpi_card("Products Count", str(len(dcp_agg)), "منتج مختلف باع", "neu", accent_color="#7F77DD"), unsafe_allow_html=True)
+
+                    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+
+                    rows_p = []
+                    for _, r in dcp_agg.head(30).iterrows():
+                        nm = str(r["item_name"])[:50] + ("..." if len(str(r["item_name"])) > 50 else "")
+                        sku_html = f"<td style='font-size:11px;color:#73726C'>{r['item_id']}</td>" if "item_id" in dcp_agg.columns else ""
+                        price_html = f"<td>{fmt_currency(r['item_price'], 0)}</td>" if "item_price" in dcp_agg.columns else ""
+                        rows_p.append(
+                            f"<tr><td>{nm}</td>{sku_html}<td><b style='color:#1877F2'>{fmt_currency(r['item_revenue'])}</b></td>"
+                            f"<td>{int(r['items_purchased'])}</td>{price_html}</tr>"
+                        )
+                    sku_th = "<th>SKU / ID</th>" if "item_id" in dcp_agg.columns else ""
+                    price_th = "<th>السعر</th>" if "item_price" in dcp_agg.columns else ""
+                    st.markdown(
+                        f"<table class='styled-table'><thead><tr><th>المنتج</th>{sku_th}<th>Revenue</th><th>الكمية</th>{price_th}</tr></thead>"
+                        f"<tbody>{''.join(rows_p)}</tbody></table>",
+                        unsafe_allow_html=True,
+                    )
+                    export_csv_button(dcp_agg, f"products_{sel_campaign[:20]}.csv", "📥 Export Products CSV")
+                else:
+                    st.info(f"مفيش منتجات باعت من كامبين '{sel_campaign}' في الفترة دي.")
+            else:
+                st.info("مفيش بيانات منتجات متاحة على مستوى الكامبين — تأكد إن item-level UTM tracking مفعّل.")
         else:
             st.info("مفيش بيانات Meta campaigns كفاية حالياً.")
     else:
