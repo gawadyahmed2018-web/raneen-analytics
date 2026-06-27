@@ -654,12 +654,18 @@ elif active_tab == "E-Commerce":
         with c3: st.markdown(kpi_card("Avg Unit Price", fmt_currency(tir / tiu, 0) if tiu else "—", "Revenue / Units", "neu", accent_color="#7F77DD"), unsafe_allow_html=True)
 
         st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
-        col_l, col_r = st.columns(2)
+        col_l, col_m, col_r = st.columns(3)
         with col_l:
             st.markdown(section_header("Revenue by Category", "", "#1D9E75"), unsafe_allow_html=True)
             mx = df_cf["gross_item_revenue"].max()
             for i, (_, r) in enumerate(df_cf.head(10).iterrows()):
                 st.markdown(bar_html(f"{CAT_ICONS.get(r['item_category'],'')} {r['item_category']}", r["gross_item_revenue"] / mx * 100 if mx else 0, CAT_COLORS[i % len(CAT_COLORS)], fmt_currency(r["gross_item_revenue"])), unsafe_allow_html=True)
+        with col_m:
+            st.markdown(section_header("Views by Category", "", "#3266AD"), unsafe_allow_html=True)
+            df_views = df_cf.sort_values("items_viewed", ascending=False)
+            mx = df_views["items_viewed"].max()
+            for i, (_, r) in enumerate(df_views.head(10).iterrows()):
+                st.markdown(bar_html(f"{CAT_ICONS.get(r['item_category'],'')} {r['item_category']}", r["items_viewed"] / mx * 100 if mx else 0, CAT_COLORS[i % len(CAT_COLORS)], fmt_number(r["items_viewed"])), unsafe_allow_html=True)
         with col_r:
             st.markdown(section_header("Cart-to-View Rate", "", "#EF9F27"), unsafe_allow_html=True)
             df_cf = df_cf.copy()
