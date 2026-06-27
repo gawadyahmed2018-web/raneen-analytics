@@ -26,6 +26,10 @@ section[data-testid="stSidebar"] .stTextInput label { color: #73726C !important;
 .kpi-label { font-size: 11px; color: #73726C; font-weight: 500; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 8px; }
 .kpi-value { font-size: 26px; font-weight: 600; color: #1A1A2E; line-height: 1; margin-bottom: 6px; }
 .kpi-change { font-size: 12px; } .kpi-sub { font-size: 11px; color: #9A9A8E; margin-top: 2px; }
+.kpi-split { display: flex; align-items: center; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px dashed #E2E6EA; font-size: 11px; }
+.kpi-split-web { color: #3266AD; font-weight: 500; }
+.kpi-split-app { color: #7F77DD; font-weight: 500; }
+.kpi-split-sep { color: #D0D5DD; }
 .up { color: #1D9E75; } .down { color: #D85A30; } .warn { color: #EF9F27; } .neu { color: #888780; }
 .section-header { display: flex; align-items: center; gap: 10px; padding: 6px 0 10px; border-bottom: 1px solid #E2E6EA; margin-bottom: 16px; }
 .section-dot { width: 8px; height: 8px; border-radius: 50%; }
@@ -257,13 +261,45 @@ cart_abandon = (1 - tot_orders / tot_carts) * 100 if tot_carts > 0 else 0
 avg_session_m = int(avg_session // 60)
 avg_session_s = int(avg_session % 60)
 
+# ── Per-source breakdown (for the small "Web: x · App: y" line under each KPI card) ──
+def _src_totals(df, col, agg="sum"):
+    """Return (web_value, app_value) for a given column, source-split."""
+    if df.empty or "source" not in df.columns or col not in df.columns:
+        return 0, 0
+    g = df.groupby("source")[col].apply(lambda s: s.apply(safe_num).sum() if agg == "sum" else s.apply(safe_num).mean())
+    return safe_num(g.get("web", 0)), safe_num(g.get("app", 0))
+
+ses_w, ses_a = _src_totals(df_ov, "sessions")
+rev_w, rev_a = _src_totals(df_ov, "purchase_revenue")
+ord_w, ord_a = _src_totals(df_ov, "transactions")
+cart_w, cart_a = _src_totals(df_ov, "add_to_carts")
+bounce_w, bounce_a = _src_totals(df_ov, "bounce_rate", agg="mean")
+sess_dur_w, sess_dur_a = _src_totals(df_ov, "average_session_duration", agg="mean")
+
+aov_w = rev_w / ord_w if ord_w > 0 else 0
+aov_a = rev_a / ord_a if ord_a > 0 else 0
+cvr_w = ord_w / ses_w * 100 if ses_w > 0 else 0
+cvr_a = ord_a / ses_a * 100 if ses_a > 0 else 0
+bounce_w_pct = bounce_w * 100
+bounce_a_pct = bounce_a * 100
+sess_dur_w_m, sess_dur_w_s = int(sess_dur_w // 60), int(sess_dur_w % 60)
+sess_dur_a_m, sess_dur_a_s = int(sess_dur_a // 60), int(sess_dur_a % 60)
+
 
 # ── UI HELPERS ────────────────────────────────────────────
-def kpi_card(label, value, change_txt, change_cls, sub="", accent_color="#3266AD"):
+def kpi_card(label, value, change_txt, change_cls, sub="", accent_color="#3266AD", web_val=None, app_val=None):
+    split_html = ""
+    if web_val is not None and app_val is not None:
+        split_html = f"""<div class="kpi-split">
+        <span class="kpi-split-web">🌐 {web_val}</span>
+        <span class="kpi-split-sep">·</span>
+        <span class="kpi-split-app">📱 {app_val}</span>
+        </div>"""
     return f"""<div class="kpi-card"><div class="kpi-accent" style="background:{accent_color}"></div>
     <div class="kpi-label">{label}</div><div class="kpi-value">{value}</div>
     <div class="kpi-change {change_cls}">{change_txt}</div>
-    {'<div class="kpi-sub">' + sub + '</div>' if sub else ''}</div>"""
+    {'<div class="kpi-sub">' + sub + '</div>' if sub else ''}
+    {split_html}</div>"""
 
 
 def section_header(title, sub="", color="#3266AD"):
@@ -304,17 +340,26 @@ if active_tab == "Overview":
     st.markdown(section_header("Overview", "Key Performance Indicators", "#3266AD"), unsafe_allow_html=True)
 
     c1, c2, c3, c4 = st.columns(4)
-    with c1: st.markdown(kpi_card("Sessions", fmt_number(tot_sessions), "▲ Live GA4 Data", "up", accent_color="#3266AD"), unsafe_allow_html=True)
-    with c2: st.markdown(kpi_card("Revenue", fmt_currency(tot_revenue), "▲ Purchase Revenue", "up", accent_color="#1D9E75"), unsafe_allow_html=True)
-    with c3: st.markdown(kpi_card("Orders", fmt_number(tot_orders), "▲ Transactions", "up", accent_color="#1D9E75"), unsafe_allow_html=True)
-    with c4: st.markdown(kpi_card("AOV", fmt_currency(aov, 0), "متوسط قيمة الطلب", "neu", accent_color="#3266AD"), unsafe_allow_html=True)
+    _show_split = source_filter == "both"
+    with c1: st.markdown(kpi_card("Sessions", fmt_number(tot_sessions), "▲ Live GA4 Data", "up", accent_color="#3266AD",
+                                   web_val=fmt_number(ses_w) if _show_split else None, app_val=fmt_number(ses_a) if _show_split else None), unsafe_allow_html=True)
+    with c2: st.markdown(kpi_card("Revenue", fmt_currency(tot_revenue), "▲ Purchase Revenue", "up", accent_color="#1D9E75",
+                                   web_val=fmt_currency(rev_w) if _show_split else None, app_val=fmt_currency(rev_a) if _show_split else None), unsafe_allow_html=True)
+    with c3: st.markdown(kpi_card("Orders", fmt_number(tot_orders), "▲ Transactions", "up", accent_color="#1D9E75",
+                                   web_val=fmt_number(ord_w) if _show_split else None, app_val=fmt_number(ord_a) if _show_split else None), unsafe_allow_html=True)
+    with c4: st.markdown(kpi_card("AOV", fmt_currency(aov, 0), "متوسط قيمة الطلب", "neu", accent_color="#3266AD",
+                                   web_val=fmt_currency(aov_w, 0) if _show_split else None, app_val=fmt_currency(aov_a, 0) if _show_split else None), unsafe_allow_html=True)
 
     st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
     c5, c6, c7, c8 = st.columns(4)
-    with c5: st.markdown(kpi_card("Add to Cart", fmt_number(tot_carts), f"⚠ Cart Abandon {cart_abandon:.1f}%", "warn", accent_color="#EF9F27"), unsafe_allow_html=True)
-    with c6: st.markdown(kpi_card("Bounce Rate", fmt_pct(avg_bounce), "▼ Monitor carefully", "down" if avg_bounce > 50 else "warn", accent_color="#D85A30"), unsafe_allow_html=True)
-    with c7: st.markdown(kpi_card("Avg Session", f"{avg_session_m}:{avg_session_s:02d} min", "▲ Engagement", "up", accent_color="#7F77DD"), unsafe_allow_html=True)
-    with c8: st.markdown(kpi_card("CVR", fmt_pct(cvr, 2), "⚠ Needs improvement" if cvr < 1 else "▲ Good", "warn" if cvr < 1 else "up", accent_color="#D85A30" if cvr < 1 else "#1D9E75"), unsafe_allow_html=True)
+    with c5: st.markdown(kpi_card("Add to Cart", fmt_number(tot_carts), f"⚠ Cart Abandon {cart_abandon:.1f}%", "warn", accent_color="#EF9F27",
+                                   web_val=fmt_number(cart_w) if _show_split else None, app_val=fmt_number(cart_a) if _show_split else None), unsafe_allow_html=True)
+    with c6: st.markdown(kpi_card("Bounce Rate", fmt_pct(avg_bounce), "▼ Monitor carefully", "down" if avg_bounce > 50 else "warn", accent_color="#D85A30",
+                                   web_val=fmt_pct(bounce_w_pct) if _show_split else None, app_val=fmt_pct(bounce_a_pct) if _show_split else None), unsafe_allow_html=True)
+    with c7: st.markdown(kpi_card("Avg Session", f"{avg_session_m}:{avg_session_s:02d} min", "▲ Engagement", "up", accent_color="#7F77DD",
+                                   web_val=f"{sess_dur_w_m}:{sess_dur_w_s:02d}" if _show_split else None, app_val=f"{sess_dur_a_m}:{sess_dur_a_s:02d}" if _show_split else None), unsafe_allow_html=True)
+    with c8: st.markdown(kpi_card("CVR", fmt_pct(cvr, 2), "⚠ Needs improvement" if cvr < 1 else "▲ Good", "warn" if cvr < 1 else "up", accent_color="#D85A30" if cvr < 1 else "#1D9E75",
+                                   web_val=fmt_pct(cvr_w, 2) if _show_split else None, app_val=fmt_pct(cvr_a, 2) if _show_split else None), unsafe_allow_html=True)
 
     st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
 
