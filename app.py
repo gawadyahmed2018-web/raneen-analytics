@@ -648,6 +648,15 @@ elif active_tab == "E-Commerce":
                 rev_by_src = df_cat.copy()
                 rev_by_src["gross_item_revenue"] = rev_by_src["gross_item_revenue"].apply(safe_num)
                 st.write("Revenue per source:", rev_by_src.groupby("source")["gross_item_revenue"].sum().to_dict())
+
+            app_rows = df_cat[df_cat["source"] == "app"]
+            if not app_rows.empty:
+                st.markdown("**🎯 App row(s) — exact item_category value:**")
+                for _, r in app_rows.iterrows():
+                    st.code(f"item_category = {r.get('item_category')!r}")
+                st.dataframe(app_rows)
+            st.markdown("**RANEEN_CATS list used for filtering:**")
+            st.code(str(RANEEN_CATS))
             st.dataframe(df_cat.head(20))
         else:
             st.warning("⚠️ No 'source' column found in df_cat — the data wasn't tagged by source at all.")
@@ -660,7 +669,27 @@ elif active_tab == "E-Commerce":
             if col in df_cat.columns:
                 df_cat[col] = df_cat[col].apply(safe_num)
         df_cat_agg = df_cat.groupby("item_category").sum(numeric_only=True).reset_index()
-        df_cf = df_cat_agg[df_cat_agg["item_category"].isin(RANEEN_CATS)].sort_values("gross_item_revenue", ascending=False)
+
+        known = df_cat_agg[df_cat_agg["item_category"].isin(RANEEN_CATS)].copy()
+        unknown = df_cat_agg[~df_cat_agg["item_category"].isin(RANEEN_CATS)].copy()
+
+        # If there's meaningful revenue in unmatched categories (e.g. App returns
+        # "(not set)" or different category names), surface it instead of silently
+        # dropping it — fold it into a single "App / Other" bucket.
+        unknown_rev = safe_num(unknown["gross_item_revenue"].sum()) if not unknown.empty else 0
+        if unknown_rev > 0:
+            other_row = pd.DataFrame([{
+                "item_category": "App / Other (غير مصنف)",
+                "gross_item_revenue": unknown["gross_item_revenue"].sum(),
+                "items_purchased": unknown["items_purchased"].sum() if "items_purchased" in unknown.columns else 0,
+                "items_viewed": unknown["items_viewed"].sum() if "items_viewed" in unknown.columns else 0,
+                "items_added_to_cart": unknown["items_added_to_cart"].sum() if "items_added_to_cart" in unknown.columns else 0,
+            }])
+            df_cf = pd.concat([known, other_row], ignore_index=True).sort_values("gross_item_revenue", ascending=False)
+            st.info(f"ℹ️ {fmt_currency(unknown_rev)} من الـ revenue جاية من categories مش متطابقة مع القايمة المعروفة (غالباً App) — مجمّعة في 'App / Other' تحت.")
+        else:
+            df_cf = known.sort_values("gross_item_revenue", ascending=False)
+
         tir = df_cf["gross_item_revenue"].sum()
         tiu = df_cf["items_purchased"].sum()
 
