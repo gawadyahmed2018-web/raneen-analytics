@@ -639,6 +639,22 @@ elif active_tab == "E-Commerce":
     CAT_ICONS = {"الأجهزة المنزلية": "🏠", "الأثاث": "🛋️", "الإلكترونيات": "📺", "المطبخ": "🍳", "موبايلات": "📱", "المفروشات": "🛏️", "عروض رنين": "🏷️", "المنزل": "🪴", "المنتجات العائلية": "👨‍👩‍👧", "الأزياء و الموضة": "👗"}
     CAT_COLORS = ["#3266AD", "#378ADD", "#85B7EB", "#1D9E75", "#5DCAA5", "#EF9F27", "#7F77DD", "#D85A30", "#888780", "#B5D4F4"]
 
+    # ── DEBUG: verify web/app split is actually returning different data ──
+    with st.expander("🔍 Debug — Data source breakdown (تأكد إن الـ App بترجع بيانات)"):
+        if "source" in df_cat.columns:
+            src_counts = df_cat["source"].value_counts()
+            st.write("Rows per source:", src_counts.to_dict())
+            if "gross_item_revenue" in df_cat.columns:
+                rev_by_src = df_cat.copy()
+                rev_by_src["gross_item_revenue"] = rev_by_src["gross_item_revenue"].apply(safe_num)
+                st.write("Revenue per source:", rev_by_src.groupby("source")["gross_item_revenue"].sum().to_dict())
+            st.dataframe(df_cat.head(20))
+        else:
+            st.warning("⚠️ No 'source' column found in df_cat — the data wasn't tagged by source at all.")
+            st.write(f"Current filter: **{source_filter}**")
+            st.write(f"Rows returned: {len(df_cat)}")
+            st.dataframe(df_cat.head(20))
+
     if not df_cat.empty and "item_category" in df_cat.columns:
         for col in ["gross_item_revenue", "items_purchased", "items_viewed", "items_added_to_cart"]:
             if col in df_cat.columns:
