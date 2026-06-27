@@ -290,16 +290,14 @@ sess_dur_a_m, sess_dur_a_s = int(sess_dur_a // 60), int(sess_dur_a % 60)
 def kpi_card(label, value, change_txt, change_cls, sub="", accent_color="#3266AD", web_val=None, app_val=None):
     split_html = ""
     if web_val is not None and app_val is not None:
-        split_html = f"""<div class="kpi-split">
-        <span class="kpi-split-web">🌐 {web_val}</span>
-        <span class="kpi-split-sep">·</span>
-        <span class="kpi-split-app">📱 {app_val}</span>
-        </div>"""
-    return f"""<div class="kpi-card"><div class="kpi-accent" style="background:{accent_color}"></div>
-    <div class="kpi-label">{label}</div><div class="kpi-value">{value}</div>
-    <div class="kpi-change {change_cls}">{change_txt}</div>
-    {'<div class="kpi-sub">' + sub + '</div>' if sub else ''}
-    {split_html}</div>"""
+        split_html = f'<div class="kpi-split"><span class="kpi-split-web">🌐 {web_val}</span><span class="kpi-split-sep">·</span><span class="kpi-split-app">📱 {app_val}</span></div>'
+    sub_html = f'<div class="kpi-sub">{sub}</div>' if sub else ""
+    return (
+        f'<div class="kpi-card"><div class="kpi-accent" style="background:{accent_color}"></div>'
+        f'<div class="kpi-label">{label}</div><div class="kpi-value">{value}</div>'
+        f'<div class="kpi-change {change_cls}">{change_txt}</div>'
+        f'{sub_html}{split_html}</div>'
+    )
 
 
 def section_header(title, sub="", color="#3266AD"):
