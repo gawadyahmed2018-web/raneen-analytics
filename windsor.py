@@ -36,9 +36,11 @@ def _preset_to_dates(preset):
 
 def _fetch_one_account(account_name, fields, date_from, date_to, timeout=30):
     """Fetch data from Windsor for ONE GA4 account, tag rows with source."""
+    # IMPORTANT: account_name must NOT be forced into the fields list.
+    # It's only a filter parameter here. Adding it as an extra dimension
+    # alongside high-cardinality dimensions (e.g. page_path) can hit GA4's
+    # dimension-compatibility limits and silently return zero rows.
     fields_clean = [f for f in fields if f != "account_name"]
-    if "account_name" not in fields_clean:
-        fields_clean = ["account_name"] + fields_clean
 
     params = {
         "api_key": WINDSOR_KEY,
@@ -56,7 +58,8 @@ def _fetch_one_account(account_name, fields, date_from, date_to, timeout=30):
             return pd.DataFrame()
         df = pd.DataFrame(rows)
         # Safety net: if Windsor ignored the account_name filter and returned
-        # multiple accounts mixed together, filter client-side too.
+        # multiple accounts mixed together, filter client-side too — but only
+        # if account_name actually came back in the response.
         if "account_name" in df.columns:
             df = df[df["account_name"].astype(str).str.strip() == account_name]
         return df
