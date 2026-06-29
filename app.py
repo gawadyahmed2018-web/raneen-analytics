@@ -180,6 +180,33 @@ def load_devices(preset, d_from, d_to, src):
 
 
 @st.cache_data(ttl=300, show_spinner=False)
+def load_page_performance(preset, d_from, d_to, src):
+    # Fetch each field group separately so an invalid/renamed field on
+    # Windsor's side doesn't silently kill the entire request and leave
+    # the whole page-performance section empty. page_path + sessions is
+    # confirmed working live; the rest are merged in only if available.
+    df_base = get_windsor_data(["page_path", "sessions"], preset, d_from, d_to, source=src)
+    if df_base.empty:
+        return pd.DataFrame()
+
+    result = df_base
+
+    for extra_fields in (
+        ["page_path", "bounce_rate"],
+        ["page_path", "average_session_duration"],
+        ["page_path", "purchase_revenue", "transactions"],
+    ):
+        df_extra = get_windsor_data(extra_fields, preset, d_from, d_to, source=src)
+        if not df_extra.empty:
+            try:
+                result = pd.merge(result, df_extra, on=["page_path", "source"], how="left")
+            except Exception:
+                pass  # keep going with what we already have
+
+    return result
+
+
+@st.cache_data(ttl=300, show_spinner=False)
 def load_new_returning(preset, d_from, d_to, src):
     df1 = get_windsor_data(["new_vs_returning", "sessions", "active_users"], preset, d_from, d_to, source=src)
     df2 = get_windsor_data(["new_vs_returning", "purchase_revenue", "transactions"], preset, d_from, d_to, source=src)
@@ -250,6 +277,7 @@ with st.spinner("⏳ Loading GA4 data (Web + App)..."):
     df_dv = load_devices(date_preset, _d_from, _d_to, source_filter)
     df_nr = load_new_returning(date_preset, _d_from, _d_to, source_filter)
     df_cp = load_campaigns(date_preset, _d_from, _d_to, source_filter)
+    df_pg = load_page_performance(date_preset, _d_from, _d_to, source_filter)
 
 if df_ov.empty:
     st.error("❌ Could not load data. Windsor API error — check logs, or try refreshing.")
@@ -591,6 +619,87 @@ elif active_tab == "Traffic":
         export_csv_button(df_g[["session_default_channel_group", "sessions", "purchase_revenue", "transactions"]], "channels.csv")
     else:
         st.info("مفيش بيانات channels متاحة لهذا الفلتر.")
+
+    # ── Page Performance — per-page traffic from GA4 page_path ──────
+    st.markdown("<div style='height:24px'></div>", unsafe_allow_html=True)
+    st.markdown(section_header("Page Performance", "أداء كل صفحة (Sessions, Views, Bounce, Revenue)", "#7F77DD"), unsafe_allow_html=True)
+
+    if not df_pg.empty and "page_path" in df_pg.columns:
+        for col in ["sessions", "screen_page_views", "bounce_rate", "average_session_duration", "purchase_revenue", "transactions"]:
+            if col in df_pg.columns:
+                df_pg[col] = df_pg[col].apply(safe_num)
+
+        df_pg_agg = (
+            df_pg[df_pg["page_path"].notna() & (df_pg["page_path"] != "")]
+            .groupby("page_path", as_index=False)
+            .sum(numeric_only=True)
+        )
+        df_pg_agg = df_pg_agg[df_pg_agg["sessions"] > 0].sort_values("sessions", ascending=False)
+
+        search_term = st.text_input(
+            "🔍 دور على صفحة معينة (اكتب جزء من الرابط — مثلاً zanussi أو category)",
+            key="page_search",
+        )
+        df_pg_view = df_pg_agg
+        if search_term.strip():
+            df_pg_view = df_pg_agg[df_pg_agg["page_path"].str.contains(search_term.strip(), case=False, na=False)]
+
+        if not df_pg_view.empty:
+            top_n_pages = st.slider("عدد الصفحات المعروضة", 5, 100, 25, key="page_topn")
+            df_pg_show = df_pg_view.head(top_n_pages)
+
+            tot_pg_sessions = df_pg_show["sessions"].sum()
+            tot_pg_views = df_pg_show["screen_page_views"].sum() if "screen_page_views" in df_pg_show.columns else 0
+            avg_bounce_pg = df_pg_show["bounce_rate"].mean() * 100 if "bounce_rate" in df_pg_show.columns else 0
+
+            c1, c2, c3 = st.columns(3)
+            with c1: st.markdown(kpi_card("Total Sessions (شاشة)", fmt_number(tot_pg_sessions), "للصفحات المعروضة", "neu", accent_color="#7F77DD"), unsafe_allow_html=True)
+            with c2: st.markdown(kpi_card("Total Page Views", fmt_number(tot_pg_views), "للصفحات المعروضة", "neu", accent_color="#3266AD"), unsafe_allow_html=True)
+            with c3: st.markdown(kpi_card("Avg Bounce Rate", fmt_pct(avg_bounce_pg), "متوسط الصفحات المعروضة", "warn" if avg_bounce_pg > 50 else "up", accent_color="#D85A30" if avg_bounce_pg > 50 else "#1D9E75"), unsafe_allow_html=True)
+
+            st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+
+            rows_pg = []
+            for _, r in df_pg_show.iterrows():
+                path = str(r["page_path"])
+                disp_path = path if len(path) <= 55 else path[:52] + "..."
+                br = safe_num(r.get("bounce_rate", 0)) * 100
+                dur = safe_num(r.get("average_session_duration", 0))
+                dur_m, dur_s = int(dur // 60), int(dur % 60)
+                rev = safe_num(r.get("purchase_revenue", 0))
+                br_color = "#1D9E75" if br < 40 else "#EF9F27" if br < 60 else "#D85A30"
+                rows_pg.append(
+                    f"<tr><td style='font-size:12px' title='{path}'>{disp_path}</td>"
+                    f"<td>{fmt_number(r['sessions'])}</td>"
+                    f"<td>{fmt_number(r.get('screen_page_views', 0))}</td>"
+                    f"<td><b style='color:{br_color}'>{br:.1f}%</b></td>"
+                    f"<td>{dur_m}:{dur_s:02d}</td>"
+                    f"<td>{fmt_currency(rev) if rev > 0 else '—'}</td></tr>"
+                )
+            st.markdown(
+                "<table class='styled-table'><thead><tr><th>Page Path</th><th>Sessions</th>"
+                "<th>Views</th><th>Bounce Rate</th><th>Avg Time</th><th>Revenue</th></tr></thead>"
+                f"<tbody>{''.join(rows_pg)}</tbody></table>",
+                unsafe_allow_html=True,
+            )
+            export_csv_button(df_pg_show, "page_performance.csv")
+
+            # Quick visual: top 10 pages by sessions
+            st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+            st.markdown("**Top 10 Pages by Sessions**")
+            mx_pg = df_pg_show["sessions"].max()
+            PG_COLORS = ["#3266AD", "#378ADD", "#85B7EB", "#1D9E75", "#5DCAA5", "#EF9F27", "#7F77DD", "#D85A30", "#888780", "#B5D4F4"]
+            for i, (_, r) in enumerate(df_pg_show.head(10).iterrows()):
+                path = str(r["page_path"])
+                disp_path = path if len(path) <= 35 else path[:32] + "..."
+                st.markdown(
+                    bar_html(disp_path, r["sessions"] / mx_pg * 100 if mx_pg else 0, PG_COLORS[i % len(PG_COLORS)], fmt_number(r["sessions"])),
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.info(f"مفيش صفحات مطابقة لـ '{search_term}'.")
+    else:
+        st.info("مفيش بيانات page-level متاحة — تأكد إن GA4 بترصد page_path/screen_page_views.")
 
 
 # ═══════════════════════════════════════════════════════════
