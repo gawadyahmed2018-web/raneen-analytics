@@ -34,7 +34,7 @@ def _preset_to_dates(preset):
     return str(df), str(dt)
 
 
-def _fetch_one_account(account_name, fields, date_from, date_to, timeout=90):
+def _fetch_one_account(account_name, fields, date_from, date_to, timeout=45):
     """Fetch data from Windsor for ONE GA4 account, tag rows with source."""
     # IMPORTANT: account_name must NOT be forced into the fields list.
     # It's only a filter parameter here. Adding it as an extra dimension
@@ -72,7 +72,7 @@ def _fetch_one_account(account_name, fields, date_from, date_to, timeout=90):
 
 
 def get_windsor_data(fields, date_preset="last_30d", date_from=None, date_to=None,
-                      timeout=90, source="both"):
+                      timeout=45, source="both"):
     """
     Fetch GA4 data combined from Web + App (or just one).
 
