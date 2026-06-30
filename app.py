@@ -133,50 +133,27 @@ else:
 # ── LOAD DATA (all aggregations now pull source=source_filter) ──
 @st.cache_data(ttl=300, show_spinner=False)
 def load_overview(preset, d_from, d_to, src):
-    df1 = get_windsor_data(["date", "sessions", "active_users", "bounce_rate", "average_session_duration"], preset, d_from, d_to, source=src)
-    df2 = get_windsor_data(["date", "purchase_revenue", "transactions", "add_to_carts", "checkouts"], preset, d_from, d_to, source=src)
-    if df1.empty and df2.empty:
-        return pd.DataFrame()
-    if df1.empty:
-        return df2
-    if df2.empty:
-        return df1
-    try:
-        return pd.merge(df1, df2, on=["date", "source"], how="outer")
-    except Exception:
-        return df1
+    return get_windsor_data(
+        ["date", "sessions", "active_users", "bounce_rate", "average_session_duration",
+         "purchase_revenue", "transactions", "add_to_carts", "checkouts"],
+        preset, d_from, d_to, source=src,
+    )
 
 
 @st.cache_data(ttl=300, show_spinner=False)
 def load_channels(preset, d_from, d_to, src):
-    df1 = get_windsor_data(["session_default_channel_group", "sessions"], preset, d_from, d_to, source=src)
-    df2 = get_windsor_data(["session_default_channel_group", "purchase_revenue", "transactions", "add_to_carts", "checkouts"], preset, d_from, d_to, source=src)
-    if df1.empty and df2.empty:
-        return pd.DataFrame()
-    if df1.empty:
-        return df2
-    if df2.empty:
-        return df1
-    try:
-        return pd.merge(df1, df2, on=["session_default_channel_group", "source"], how="outer")
-    except Exception:
-        return df1
+    return get_windsor_data(
+        ["session_default_channel_group", "sessions", "purchase_revenue", "transactions", "add_to_carts", "checkouts"],
+        preset, d_from, d_to, source=src,
+    )
 
 
 @st.cache_data(ttl=300, show_spinner=False)
 def load_devices(preset, d_from, d_to, src):
-    df1 = get_windsor_data(["devicecategory", "sessions", "bounce_rate", "engagement_rate"], preset, d_from, d_to, source=src)
-    df2 = get_windsor_data(["devicecategory", "purchase_revenue", "transactions"], preset, d_from, d_to, source=src)
-    if df1.empty and df2.empty:
-        return pd.DataFrame()
-    if df1.empty:
-        return df2
-    if df2.empty:
-        return df1
-    try:
-        return pd.merge(df1, df2, on=["devicecategory", "source"], how="outer")
-    except Exception:
-        return df1
+    return get_windsor_data(
+        ["devicecategory", "sessions", "bounce_rate", "engagement_rate", "purchase_revenue", "transactions"],
+        preset, d_from, d_to, source=src,
+    )
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -208,34 +185,18 @@ def load_page_performance(preset, d_from, d_to, src):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def load_new_returning(preset, d_from, d_to, src):
-    df1 = get_windsor_data(["new_vs_returning", "sessions", "active_users"], preset, d_from, d_to, source=src)
-    df2 = get_windsor_data(["new_vs_returning", "purchase_revenue", "transactions"], preset, d_from, d_to, source=src)
-    if df1.empty and df2.empty:
-        return pd.DataFrame()
-    if df1.empty:
-        return df2
-    if df2.empty:
-        return df1
-    try:
-        return pd.merge(df1, df2, on=["new_vs_returning", "source"], how="outer")
-    except Exception:
-        return df1
+    return get_windsor_data(
+        ["new_vs_returning", "sessions", "active_users", "purchase_revenue", "transactions"],
+        preset, d_from, d_to, source=src,
+    )
 
 
 @st.cache_data(ttl=300, show_spinner=False)
 def load_campaigns(preset, d_from, d_to, src):
-    df1 = get_windsor_data(["session_google_ads_campaign_name", "sessions"], preset, d_from, d_to, source=src)
-    df2 = get_windsor_data(["session_google_ads_campaign_name", "purchase_revenue", "transactions", "add_to_carts", "checkouts"], preset, d_from, d_to, source=src)
-    if df1.empty and df2.empty:
-        return pd.DataFrame()
-    if df1.empty:
-        return df2
-    if df2.empty:
-        return df1
-    try:
-        return pd.merge(df1, df2, on=["session_google_ads_campaign_name", "source"], how="outer")
-    except Exception:
-        return df1
+    return get_windsor_data(
+        ["session_google_ads_campaign_name", "sessions", "purchase_revenue", "transactions", "add_to_carts", "checkouts"],
+        preset, d_from, d_to, source=src,
+    )
 
 
 @st.cache_data(ttl=300, show_spinner=False)
