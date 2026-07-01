@@ -36,11 +36,9 @@ def _preset_to_dates(preset):
 
 def _fetch_one_account(account_name, fields, date_from, date_to, timeout=45):
     """Fetch data from Windsor for ONE GA4 account, tag rows with source."""
-    # IMPORTANT: account_name must NOT be forced into the fields list.
-    # It's only a filter parameter here. Adding it as an extra dimension
-    # alongside high-cardinality dimensions (e.g. page_path) can hit GA4's
-    # dimension-compatibility limits and silently return zero rows.
-    fields_clean = [f for f in fields if f != "account_name"]
+    # Request account_name as a field so Windsor returns it in the response,
+    # enabling the client-side filter below to work correctly.
+    fields_clean = list(dict.fromkeys(["account_name"] + [f for f in fields if f != "account_name"]))
 
     params = {
         "api_key": WINDSOR_KEY,
@@ -57,11 +55,13 @@ def _fetch_one_account(account_name, fields, date_from, date_to, timeout=45):
         if not rows:
             return pd.DataFrame()
         df = pd.DataFrame(rows)
-        # Safety net: if Windsor ignored the account_name filter and returned
-        # multiple accounts mixed together, filter client-side too — but only
-        # if account_name actually came back in the response.
+        # Filter to only keep rows matching this account — Windsor sometimes
+        # returns blended data ignoring the account_name query parameter.
         if "account_name" in df.columns:
             df = df[df["account_name"].astype(str).str.strip() == account_name]
+        # Also filter to GA4 datasource only (exclude facebook/other connectors)
+        if "datasource" in df.columns:
+            df = df[df["datasource"].astype(str).str.strip() == "googleanalytics4"]
         return df
     except requests.exceptions.RequestException as e:
         st.warning(f"Windsor API error for {account_name}: {e}")
