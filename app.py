@@ -232,17 +232,42 @@ def load_meta_campaigns(preset, d_from, d_to, src):
     return get_windsor_data(["session_manual_campaign_name", "sessions", "purchase_revenue", "transactions", "add_to_carts"], preset, d_from, d_to, source=src)
 
 
-with st.spinner("⏳ Loading GA4 data (Web + App)..."):
+# ── Load only Overview data upfront (lightweight, needed for KPIs) ──
+with st.spinner("⏳ Loading GA4 data..."):
     df_ov = load_overview(date_preset, _d_from, _d_to, source_filter)
-    df_ch = load_channels(date_preset, _d_from, _d_to, source_filter)
-    df_dv = load_devices(date_preset, _d_from, _d_to, source_filter)
-    df_nr = load_new_returning(date_preset, _d_from, _d_to, source_filter)
-    df_cp = load_campaigns(date_preset, _d_from, _d_to, source_filter)
-    df_pg = load_page_performance(date_preset, _d_from, _d_to, source_filter)
 
 if df_ov.empty:
     st.error("❌ Could not load data. Windsor API error — check logs, or try refreshing.")
     st.stop()
+
+# ── Lazy-load remaining data only when the relevant tab is active ──
+df_ch = pd.DataFrame()
+df_dv = pd.DataFrame()
+df_nr = pd.DataFrame()
+df_cp = pd.DataFrame()
+df_pg = pd.DataFrame()
+
+if active_tab == "Traffic":
+    with st.spinner("⏳ Loading Traffic data..."):
+        df_ch = load_channels(date_preset, _d_from, _d_to, source_filter)
+        df_pg = load_page_performance(date_preset, _d_from, _d_to, source_filter)
+
+elif active_tab == "Devices":
+    with st.spinner("⏳ Loading Devices data..."):
+        df_dv = load_devices(date_preset, _d_from, _d_to, source_filter)
+
+elif active_tab == "Funnel":
+    with st.spinner("⏳ Loading Funnel data..."):
+        df_nr = load_new_returning(date_preset, _d_from, _d_to, source_filter)
+
+elif active_tab == "Campaigns":
+    with st.spinner("⏳ Loading Campaigns data..."):
+        df_cp = load_campaigns(date_preset, _d_from, _d_to, source_filter)
+
+# Overview also needs new_vs_returning for the bottom section
+if active_tab == "Overview" and df_nr.empty:
+    with st.spinner(""):
+        df_nr = load_new_returning(date_preset, _d_from, _d_to, source_filter)
 
 # ── TOTALS ────────────────────────────────────────────────
 tot_sessions = safe_num(df_ov["sessions"].sum()) if "sessions" in df_ov else 0
