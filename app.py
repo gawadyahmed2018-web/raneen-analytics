@@ -215,8 +215,9 @@ def load_subcategory(preset, d_from, d_to, src):
 
 
 @st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def load_campaign_products(preset, d_from, d_to, src):
-    return get_windsor_data(["session_google_ads_campaign_name", "item_name", "item_revenue", "items_purchased"], preset, d_from, d_to, source=src)
+    return get_windsor_data(["session_google_ads_campaign_name", "item_name", "item_id", "item_revenue", "items_purchased", "item_price"], preset, d_from, d_to, source=src)
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -998,36 +999,69 @@ elif active_tab == "Campaigns":
             st.markdown("<div style='height:24px'></div>", unsafe_allow_html=True)
             st.markdown(section_header("Products by Campaign", "إيه اللي باع من كل كامبين؟", "#1877F2"), unsafe_allow_html=True)
 
-            campaign_options = df_meta_f["session_manual_campaign_name"].tolist()
-            sel_campaign = st.selectbox("اختار الكامبين", campaign_options, key="meta_campaign_dd")
+            # Source selector: Meta or Google Ads
+            prod_source = st.radio(
+                "مصدر الكامبين",
+                ["Meta (Facebook/Instagram)", "Google Ads"],
+                horizontal=True,
+                key="prod_campaign_source"
+            )
 
-            with st.spinner("Loading products for this campaign..."):
-                df_camp_prod = load_meta_campaign_products(date_preset, _d_from, _d_to, source_filter)
+            if prod_source == "Meta (Facebook/Instagram)":
+                campaign_options = df_meta_f["session_manual_campaign_name"].tolist()
+                sel_campaign = st.selectbox("اختار الكامبين", campaign_options, key="meta_campaign_dd")
+                with st.spinner("Loading products..."):
+                    df_camp_prod = load_meta_campaign_products(date_preset, _d_from, _d_to, source_filter)
+                camp_col = "session_manual_campaign_name"
+                accent = "#1877F2"
+            else:
+                # Google Ads campaigns
+                with st.spinner("Loading Google Ads campaigns..."):
+                    df_gads = load_campaigns(date_preset, _d_from, _d_to, source_filter)
+                if not df_gads.empty and "session_google_ads_campaign_name" in df_gads.columns:
+                    gads_camps = df_gads[
+                        df_gads["session_google_ads_campaign_name"].notna() &
+                        (df_gads["session_google_ads_campaign_name"] != "(not set)")
+                    ]["session_google_ads_campaign_name"].unique().tolist()
+                    sel_campaign = st.selectbox("اختار الكامبين", gads_camps, key="gads_campaign_dd")
+                    with st.spinner("Loading products..."):
+                        df_camp_prod = load_campaign_products(date_preset, _d_from, _d_to, source_filter)
+                    camp_col = "session_google_ads_campaign_name"
+                    accent = "#4285F4"
+                else:
+                    st.info("مفيش بيانات Google Ads campaigns متاحة.")
+                    df_camp_prod = pd.DataFrame()
+                    camp_col = "session_google_ads_campaign_name"
+                    sel_campaign = ""
+                    accent = "#4285F4"
 
-            if not df_camp_prod.empty and "session_manual_campaign_name" in df_camp_prod.columns:
-                for col in ["item_revenue", "items_purchased", "item_price"]:
+            if not df_camp_prod.empty and camp_col in df_camp_prod.columns:
+                for col in ["item_revenue", "items_purchased"]:
                     if col in df_camp_prod.columns:
                         df_camp_prod[col] = df_camp_prod[col].apply(safe_num)
 
-                dcp = df_camp_prod[df_camp_prod["session_manual_campaign_name"] == sel_campaign].copy()
+                dcp = df_camp_prod[df_camp_prod[camp_col] == sel_campaign].copy()
 
                 group_cols = ["item_name"]
                 if "item_id" in dcp.columns:
                     group_cols.append("item_id")
 
                 agg_dict = {"item_revenue": "sum", "items_purchased": "sum"}
-                if "item_price" in dcp.columns:
-                    agg_dict["item_price"] = "mean"
-
                 dcp_agg = dcp.groupby(group_cols, as_index=False).agg(agg_dict)
                 dcp_agg = dcp_agg[dcp_agg["item_revenue"] > 0].sort_values("item_revenue", ascending=False)
+
+                # Calculate unit price from revenue ÷ units (more reliable than item_price field)
+                dcp_agg["avg_price"] = dcp_agg.apply(
+                    lambda r: r["item_revenue"] / r["items_purchased"] if r["items_purchased"] > 0 else 0,
+                    axis=1
+                )
 
                 if not dcp_agg.empty:
                     tot_camp_rev = dcp_agg["item_revenue"].sum()
                     tot_camp_units = dcp_agg["items_purchased"].sum()
 
                     pc1, pc2, pc3 = st.columns(3)
-                    with pc1: st.markdown(kpi_card("Campaign Product Revenue", fmt_currency(tot_camp_rev), sel_campaign[:30], "up", accent_color="#1877F2"), unsafe_allow_html=True)
+                    with pc1: st.markdown(kpi_card("Campaign Product Revenue", fmt_currency(tot_camp_rev), sel_campaign[:30], "up", accent_color=accent), unsafe_allow_html=True)
                     with pc2: st.markdown(kpi_card("Units Sold", fmt_number(tot_camp_units), "من هذا الكامبين", "neu", accent_color="#3266AD"), unsafe_allow_html=True)
                     with pc3: st.markdown(kpi_card("Products Count", str(len(dcp_agg)), "منتج مختلف باع", "neu", accent_color="#7F77DD"), unsafe_allow_html=True)
 
@@ -1037,15 +1071,15 @@ elif active_tab == "Campaigns":
                     for _, r in dcp_agg.head(30).iterrows():
                         nm = str(r["item_name"])[:50] + ("..." if len(str(r["item_name"])) > 50 else "")
                         sku_html = f"<td style='font-size:11px;color:#73726C'>{r['item_id']}</td>" if "item_id" in dcp_agg.columns else ""
-                        price_html = f"<td>{fmt_currency(r['item_price'], 0)}</td>" if "item_price" in dcp_agg.columns else ""
                         rows_p.append(
-                            f"<tr><td>{nm}</td>{sku_html}<td><b style='color:#1877F2'>{fmt_currency(r['item_revenue'])}</b></td>"
-                            f"<td>{int(r['items_purchased'])}</td>{price_html}</tr>"
+                            f"<tr><td>{nm}</td>{sku_html}"
+                            f"<td><b style='color:{accent}'>{fmt_currency(r['item_revenue'])}</b></td>"
+                            f"<td>{int(r['items_purchased'])}</td>"
+                            f"<td>{fmt_currency(r['avg_price'], 0)}</td></tr>"
                         )
                     sku_th = "<th>SKU / ID</th>" if "item_id" in dcp_agg.columns else ""
-                    price_th = "<th>السعر</th>" if "item_price" in dcp_agg.columns else ""
                     st.markdown(
-                        f"<table class='styled-table'><thead><tr><th>المنتج</th>{sku_th}<th>Revenue</th><th>الكمية</th>{price_th}</tr></thead>"
+                        f"<table class='styled-table'><thead><tr><th>المنتج</th>{sku_th}<th>Revenue</th><th>الكمية</th><th>متوسط السعر</th></tr></thead>"
                         f"<tbody>{''.join(rows_p)}</tbody></table>",
                         unsafe_allow_html=True,
                     )
