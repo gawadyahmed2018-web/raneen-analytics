@@ -666,87 +666,33 @@ def _ach_color(pct):
     return "#d85a30"
 
 def _make_gauge(pct, label, value_str, target_str, color):
-    """Plotly gauge figure for achievement percentage."""
-    pct_capped = min(pct, 150)
-    bar_color  = _ach_color(pct)
-    fig = go.Figure(go.Indicator(
-        mode="gauge+number+delta",
-        value=pct_capped,
-        number={"suffix": "%", "font": {"size": 22, "color": bar_color}, "valueformat": ".1f"},
-        delta={"reference": 100, "valueformat": ".1f", "suffix": "%",
-               "font": {"size": 11},
-               "increasing": {"color": "#2a9e75"},
-               "decreasing": {"color": "#d85a30"}},
-        title={"text": f"<b>{label}</b><br><span style='font-size:11px;color:#888'>{value_str} / {target_str}</span>",
-               "font": {"size": 13}},
-        gauge={
-            "axis": {"range": [0, 150], "tickwidth": 1, "tickcolor": "#ccc",
-                     "tickvals": [0, 50, 100, 150],
-                     "ticktext": ["0%", "50%", "100%", "150%"]},
-            "bar": {"color": bar_color, "thickness": 0.28},
-            "bgcolor": "rgba(0,0,0,0)",
-            "borderwidth": 0,
-            "steps": [
-                {"range": [0,   80],  "color": "#fde8e0"},
-                {"range": [80,  100], "color": "#faeeda"},
-                {"range": [100, 150], "color": "#e1f5ee"},
-            ],
-            "threshold": {
-                "line": {"color": "#1F3864", "width": 3},
-                "thickness": 0.85,
-                "value": 100
-            }
-        }
-    ))
-    fig.update_layout(
-        height=200,
-        margin=dict(t=60, b=10, l=20, r=20),
-        paper_bgcolor="rgba(0,0,0,0)",
-        font={"family": "sans-serif"}
+    """Lightweight HTML progress bar instead of heavy plotly gauge."""
+    bar_color = _ach_color(pct)
+    bar_w = min(pct, 100)
+    icon = "✅" if pct >= 100 else "🔶" if pct >= 80 else "🔴"
+    return (
+        f'<div style="background:var(--color-background-secondary);border-radius:10px;padding:.8rem 1rem;margin-bottom:4px">' +
+        f'<p style="font-size:11px;color:#888;margin:0 0 4px">{label}</p>' +
+        f'<p style="font-size:18px;font-weight:600;color:{bar_color};margin:0">{value_str}</p>' +
+        f'<p style="font-size:10px;color:#aaa;margin:2px 0 6px">تارجت: {target_str}</p>' +
+        f'<div style="background:#e0e0e0;border-radius:4px;height:8px">' +
+        f'<div style="width:{bar_w:.0f}%;background:{bar_color};height:8px;border-radius:4px;transition:width .3s"></div></div>' +
+        f'<p style="font-size:12px;font-weight:700;color:{bar_color};margin:4px 0 0">{icon} {pct:.1f}%</p>' +
+        f'</div>'
     )
-    return fig
 
-# ── METRICS ROW 4: Spend ──────────────────────────────────────────────────────
-if total_spend > 0:
-    _spend_rev_pct = total / total_spend if total_spend > 0 else 0
-    _roas          = total / total_spend if total_spend > 0 else 0
-    c10, c11, c12 = st.columns(3)
-    with c10:
-        st.markdown(f'<div class="metric-card" style="border-left:4px solid #854f0b"><p class="metric-label">📢 إجمالي الإنفاق الإعلاني</p><p class="metric-value" style="color:#854f0b">{total_spend/1e6:.2f}M ج</p><p class="metric-sub">للفترة المختارة</p></div>', unsafe_allow_html=True)
-    with c11:
-        st.markdown(f'<div class="metric-card" style="border-left:4px solid #639922"><p class="metric-label">📈 ROAS</p><p class="metric-value" style="color:#639922">{_roas:.1f}x</p><p class="metric-sub">إيرادات / إنفاق</p></div>', unsafe_allow_html=True)
-    with c12:
-        st.markdown(f'<div class="metric-card" style="border-left:4px solid #533ab7"><p class="metric-label">💰 Spend/Revenue %</p><p class="metric-value" style="color:#533ab7">{total_spend/total*100:.1f}%</p><p class="metric-sub">نسبة الإنفاق من المبيعات</p></div>', unsafe_allow_html=True)
 
 # ── METRICS ROW 1: Sales ──────────────────────────────────────────────────────
 st.markdown('<p class="section-title">المبيعات الإجمالية</p>', unsafe_allow_html=True)
 c1,c2,c3 = st.columns(3)
-# ── Gauge row ────────────────────────────────────────────────────────────────
+# ── Achievement bars (lightweight) ──────────────────────────────────────────
 g1, g2, g3 = st.columns(3)
 with g1:
-    st.plotly_chart(_make_gauge(
-        _ach_total,
-        "إجمالي المبيعات",
-        f"{total/1e6:.2f}M ج",
-        f"{_tgt_total/1e6:.2f}M ج",
-        "#1F3864"
-    ), use_container_width=True, config={"displayModeBar": False})
+    st.markdown(_make_gauge(_ach_total, "إجمالي المبيعات", f"{total/1e6:.2f}M ج", f"{_tgt_total/1e6:.2f}M ج", "#1F3864"), unsafe_allow_html=True)
 with g2:
-    st.plotly_chart(_make_gauge(
-        _ach_raneen,
-        "Raneen",
-        f"{raneen/1e6:.2f}M ج",
-        f"{_tgt_retail/1e6:.2f}M ج",
-        "#3266ad"
-    ), use_container_width=True, config={"displayModeBar": False})
+    st.markdown(_make_gauge(_ach_raneen, "Raneen", f"{raneen/1e6:.2f}M ج", f"{_tgt_retail/1e6:.2f}M ج", "#3266ad"), unsafe_allow_html=True)
 with g3:
-    st.plotly_chart(_make_gauge(
-        _ach_mp,
-        "MP",
-        f"{mp/1e6:.2f}M ج",
-        f"{_tgt_mp/1e6:.2f}M ج",
-        "#d85a30"
-    ), use_container_width=True, config={"displayModeBar": False})
+    st.markdown(_make_gauge(_ach_mp, "MP", f"{mp/1e6:.2f}M ج", f"{_tgt_mp/1e6:.2f}M ج", "#d85a30"), unsafe_allow_html=True)
 
 # ── Metric cards row (numbers detail) ────────────────────────────────────────
 with c1:
@@ -826,78 +772,7 @@ fig_ts.update_layout(
 )
 st.plotly_chart(fig_ts, use_container_width=True, config={"displayModeBar": False})
 
-# ── ORDERS / AOV / QTY TIME SERIES ──────────────────────────────────────────
-st.markdown('<p class="section-title">Raneen vs MP — أوردرات · AOV · قطع يومياً</p>', unsafe_allow_html=True)
-
-_ts_metric = st.radio("اختار المقياس", ["عدد الأوردرات", "AOV (ج)", "عدد القطع"],
-    horizontal=True, key="ts_metric", label_visibility="collapsed")
-
-fig_ts2 = go.Figure()
-
-if _ts_metric == "عدد الأوردرات":
-    _r_daily  = df[df["Marketplace Seller"]=="raneen"].groupby("Day")["Order #"].nunique()
-    _mp_daily = df[df["Marketplace Seller"]=="MP"].groupby("Day")["Order #"].nunique()
-    _ylabel = "عدد الأوردرات"
-elif _ts_metric == "AOV (ج)":
-    _r_rev   = df[df["Marketplace Seller"]=="raneen"].groupby("Day")["Value After Discounts"].sum()
-    _r_ord   = df[df["Marketplace Seller"]=="raneen"].groupby("Day")["Order #"].nunique()
-    _mp_rev  = df[df["Marketplace Seller"]=="MP"].groupby("Day")["Value After Discounts"].sum()
-    _mp_ord  = df[df["Marketplace Seller"]=="MP"].groupby("Day")["Order #"].nunique()
-    _r_daily  = (_r_rev / _r_ord.replace(0,1)).round(0)
-    _mp_daily = (_mp_rev / _mp_ord.replace(0,1)).round(0)
-    _ylabel = "AOV (ج)"
-else:
-    _r_daily  = df[df["Marketplace Seller"]=="raneen"].groupby("Day")["Qty Ordered"].sum()
-    _mp_daily = df[df["Marketplace Seller"]=="MP"].groupby("Day")["Qty Ordered"].sum()
-    _ylabel = "عدد القطع"
-
-_r_vals2  = [_r_daily.get(d,0)  for d in days_sorted]
-_mp_vals2 = [_mp_daily.get(d,0) for d in days_sorted]
-
-_tot_vals2 = [_r_vals2[i] + _mp_vals2[i] for i in range(len(days_sorted))]
-
-fig_ts2.add_trace(go.Scatter(
-    x=days_sorted, y=_tot_vals2, name="الإجمالي",
-    mode="lines+markers",
-    line=dict(color="#2a9e75", width=2, dash="dot"),
-    marker=dict(size=6, symbol="diamond", line=dict(width=1.5, color="white")),
-    hovertemplate="<b>%{x}</b><br>الإجمالي: <b>%{y:,.0f}</b><extra></extra>"
-))
-fig_ts2.add_trace(go.Scatter(
-    x=days_sorted, y=_r_vals2, name="Raneen",
-    mode="lines+markers",
-    line=dict(color="#3266ad", width=2.5),
-    marker=dict(size=7, symbol="circle", line=dict(width=1.5, color="white")),
-    fill="tozeroy", fillcolor="rgba(50,102,173,0.08)",
-    hovertemplate="<b>%{x}</b><br>Raneen: <b>%{y:,.0f}</b><extra></extra>"
-))
-fig_ts2.add_trace(go.Scatter(
-    x=days_sorted, y=_mp_vals2, name="MP",
-    mode="lines+markers",
-    line=dict(color="#d85a30", width=2.5),
-    marker=dict(size=7, symbol="square", line=dict(width=1.5, color="white")),
-    fill="tozeroy", fillcolor="rgba(216,90,48,0.08)",
-    hovertemplate="<b>%{x}</b><br>MP: <b>%{y:,.0f}</b><extra></extra>"
-))
-fig_ts2.update_layout(
-    height=300,
-    margin=dict(t=10,b=10,l=10,r=10),
-    paper_bgcolor="rgba(0,0,0,0)",
-    plot_bgcolor="rgba(0,0,0,0)",
-    legend=dict(orientation="h", yanchor="bottom", y=1.02),
-    yaxis=dict(tickformat=",.0f", gridcolor="rgba(128,128,128,0.1)", title=_ylabel),
-    xaxis=dict(showgrid=False),
-    hovermode="x unified"
-)
-st.plotly_chart(fig_ts2, use_container_width=True, config={"displayModeBar": False})
-
-col_ts1, col_ts2, col_ts3 = st.columns(3)
-with col_ts1:
-    st.markdown(f'<div class="metric-card"><p class="metric-label">إجمالي الفترة</p><p class="metric-value">{total/1e6:.2f}M ج</p><p class="metric-sub">{total_orders:,} أوردر</p></div>', unsafe_allow_html=True)
-with col_ts2:
-    st.markdown(f'<div class="metric-card" style="border-left:4px solid #3266ad"><p class="metric-label">Raneen</p><p class="metric-value" style="color:#3266ad">{raneen/1e6:.2f}M ج</p><p class="metric-sub">{raneen/total*100:.1f}% من الإجمالي</p></div>', unsafe_allow_html=True)
-with col_ts3:
-    st.markdown(f'<div class="metric-card" style="border-left:4px solid #d85a30"><p class="metric-label">MP</p><p class="metric-value" style="color:#d85a30">{mp/1e6:.2f}M ج</p><p class="metric-sub">{mp/total*100:.1f}% من الإجمالي</p></div>', unsafe_allow_html=True)
+# Orders/AOV/Qty chart removed for performance
 
 # ── MAIN CATEGORY METRICS ────────────────────────────────────────────────────
 st.markdown('<p class="section-title">أداء الـ Main Categories</p>', unsafe_allow_html=True)
@@ -1354,18 +1229,18 @@ region_df["aov"] = (region_df["revenue"]/region_df["orders"]).round(0)
 
 REG_PAL = ["#3266ad","#185fa5","#378add","#85b7eb","#b5d4f4","#d85a30","#ba7517","#2a9e75","#0f6e56","#533ab7","#3c3489","#993556","#639922","#854f0b","#888780"]
 
+# Region chart — top 15 only for performance
 fig_reg = go.Figure()
 fig_reg.add_trace(go.Bar(
-    y=region_df["Region"], x=region_df["revenue"],
+    y=region_df.head(15)["Region"], x=region_df.head(15)["revenue"],
     orientation="h",
-    marker_color=[REG_PAL[min(i,len(REG_PAL)-1)] for i in range(len(region_df))],
+    marker_color=[REG_PAL[min(i,len(REG_PAL)-1)] for i in range(15)],
     hovertemplate="%{y}: %{x:,.0f} ج<extra></extra>",
-    text=region_df["pct"].astype(str)+"%",
+    text=region_df.head(15)["pct"].astype(str)+"%",
     textposition="outside"
 ))
 fig_reg.update_layout(
-    height=max(350, min(len(region_df),20)*22),
-    margin=dict(t=10,b=10,l=10,r=60),
+    height=380, margin=dict(t=10,b=10,l=10,r=60),
     paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
     xaxis=dict(tickformat=",.0f"),
     yaxis=dict(ticks="", tickfont=dict(size=11)),
