@@ -92,22 +92,24 @@ def process(file):
     )
     df["Purchase Date"] = pd.to_datetime(df["Purchase Date"], format="%b %d, %Y, %I:%M:%S %p", errors="coerce")
     df["Day"] = df["Purchase Date"].dt.strftime("%b %d")
-    # Keep only needed columns to save memory
+    # Keep only needed columns
     _keep_cols = [
-        "Order #", "Purchase Date", "Day", "Order Status",
+        "Order #", "Purchase Date", "Day",
         "Marketplace Seller", "Seller_Raw", "Attribute Set", "Name", "SKU",
         "Qty Ordered", "Item Price", "Row Total", "Discount Amount",
-        "Value After Discounts", "Coupon Code", "Customer Region",
-        "Payment Method", "Purchase Point"
+        "Value After Discounts", "Coupon Code", "Customer Region", "Payment Method"
     ]
-    _keep_cols = [c for c in _keep_cols if c in df.columns]
-    df = df[_keep_cols].copy()
-    # Optimize dtypes
+    df = df[[c for c in _keep_cols if c in df.columns]].copy()
+    # Optimize dtypes — saves ~50% memory
     for _col in ["Qty Ordered","Item Price","Row Total","Discount Amount","Value After Discounts"]:
         if _col in df.columns:
             df[_col] = pd.to_numeric(df[_col], errors="coerce").astype("float32")
+    for _col in ["Attribute Set","Marketplace Seller","Customer Region","Payment Method"]:
+        if _col in df.columns:
+            df[_col] = df[_col].astype("category")
     return df
 
+@st.cache_data(show_spinner=False, max_entries=2)
 def get_price_changes(df):
     df_s = df.sort_values("Purchase Date")
     results = []
@@ -181,7 +183,10 @@ def get_period_targets(date_from, date_to):
 @st.cache_data(ttl=300, show_spinner=False, max_entries=1)
 def load_default():
     import requests as _req, io as _sio, base64 as _b64
-    # أولاً: جرب GitHub API بالـ token (أكثر موثوقية)
+    _keep = ["Order #","Purchase Date","Day","Marketplace Seller","Seller_Raw",
+             "Attribute Set","Name","SKU","Qty Ordered","Item Price","Row Total",
+             "Discount Amount","Value After Discounts","Coupon Code","Customer Region","Payment Method"]
+    # أولاً: GitHub API
     try:
         token = st.secrets.get("GITHUB_TOKEN", "")
         if token:
@@ -189,22 +194,26 @@ def load_default():
             headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
             r = _req.get(api_url, headers=headers, timeout=15)
             if r.status_code == 200:
-                data = r.json()
-                csv_bytes = _b64.b64decode(data["content"].replace("\n",""))
-                df = pd.read_csv(_sio.BytesIO(csv_bytes))
-                if not df.empty and len(df.columns) >= 5:
+                csv_bytes = _b64.b64decode(r.json()["content"].replace("\n",""))
+                df = pd.read_csv(_sio.BytesIO(csv_bytes), usecols=lambda c: c in _keep)
+                if not df.empty:
+                    for _c in df.select_dtypes("float64").columns:
+                        df[_c] = df[_c].astype("float32")
+                    for _c in ["Attribute Set","Marketplace Seller","Customer Region","Payment Method"]:
+                        if _c in df.columns: df[_c] = df[_c].astype("category")
                     return df
     except Exception:
         pass
-    # ثانياً: fallback على raw URL
+    # ثانياً: raw URL
     try:
         r = _req.get(DEFAULT_DATA_URL, timeout=15)
         if r.status_code == 200:
-            df = pd.read_csv(_sio.StringIO(r.text))
-            if not df.empty and len(df.columns) >= 5:
-                # Optimize memory
+            df = pd.read_csv(_sio.StringIO(r.text), usecols=lambda c: c in _keep)
+            if not df.empty:
                 for _c in df.select_dtypes("float64").columns:
                     df[_c] = df[_c].astype("float32")
+                for _c in ["Attribute Set","Marketplace Seller","Customer Region","Payment Method"]:
+                    if _c in df.columns: df[_c] = df[_c].astype("category")
                 return df
     except Exception:
         pass
@@ -802,17 +811,7 @@ for i, day in enumerate(days_sorted):
         r_pct = r_vals[i] / tot * 100
         mp_pct = mp_vals[i] / tot * 100
 
-# Add spend line if data available
-if total_spend > 0:
-    spend_vals = [spend_per_day.get(d, 0) for d in days_sorted]
-    if any(v > 0 for v in spend_vals):
-        fig_ts.add_trace(go.Scatter(
-            x=days_sorted, y=spend_vals, name="الإنفاق الإعلاني",
-            mode="lines+markers", line=dict(color="#854f0b", width=2, dash="dot"),
-            marker=dict(size=5, symbol="diamond"),
-            hovertemplate="<b>%{x}</b><br>الإنفاق: %{y:,.0f} ج<extra></extra>",
-            yaxis="y2"
-        ))
+# Spend line intentionally removed for performance
 
 fig_ts.update_layout(
     height=320,
@@ -821,13 +820,11 @@ fig_ts.update_layout(
     plot_bgcolor="rgba(0,0,0,0)",
     legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
     yaxis=dict(tickformat=",.0f", gridcolor="rgba(128,128,128,0.1)"),
-    yaxis2=dict(tickformat=",.0f", overlaying="y", side="right", showgrid=False,
-                title=dict(text="الإنفاق", font=dict(color="#854f0b")),
-                tickfont=dict(color="#854f0b")),
+
     xaxis=dict(showgrid=False),
     hovermode="x unified"
 )
-st.plotly_chart(fig_ts, use_container_width=True)
+st.plotly_chart(fig_ts, use_container_width=True, config={"displayModeBar": False})
 
 # ── ORDERS / AOV / QTY TIME SERIES ──────────────────────────────────────────
 st.markdown('<p class="section-title">Raneen vs MP — أوردرات · AOV · قطع يومياً</p>', unsafe_allow_html=True)
@@ -892,7 +889,7 @@ fig_ts2.update_layout(
     xaxis=dict(showgrid=False),
     hovermode="x unified"
 )
-st.plotly_chart(fig_ts2, use_container_width=True)
+st.plotly_chart(fig_ts2, use_container_width=True, config={"displayModeBar": False})
 
 col_ts1, col_ts2, col_ts3 = st.columns(3)
 with col_ts1:
@@ -998,7 +995,7 @@ fig_cat.add_trace(go.Bar(name="MP", y=chart_data["Attribute Set"], x=chart_data[
 fig_cat.update_layout(barmode="group", height=max(320, len(chart_data)*38),
     margin=dict(t=10,b=10,l=10,r=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
     legend=dict(orientation="h", yanchor="bottom", y=1.02), xaxis=dict(tickformat=",.0f"))
-st.plotly_chart(fig_cat, use_container_width=True)
+st.plotly_chart(fig_cat, use_container_width=True, config={"displayModeBar": False})
 
 max_total = cat_ch["Total"].max() if len(cat_ch) > 0 else 1
 cat_html = """<div style='max-height:520px;overflow-y:auto'><table style='width:100%;border-collapse:collapse;font-size:12px'>
@@ -1052,7 +1049,7 @@ if not pc.empty:
     pc_show = pc if selected_cat=="الكل" else pc[pc["Category"]==selected_cat]
     pc_show = pc_show.sort_values(["# Changes","SKU"], ascending=[False,True])
 
-    top15_skus = pc_show.drop_duplicates("SKU")["SKU"].head(15).tolist()
+    top15_skus = pc_show.drop_duplicates("SKU")["SKU"].head(10).tolist()
     pc_show = pc_show[pc_show["SKU"].isin(top15_skus)]
 
     n_prods = pc_show["SKU"].nunique()
@@ -1171,7 +1168,7 @@ fig_line.update_layout(
                     bordercolor="rgba(0,0,0,0.1)"),
     hovermode="x unified"
 )
-st.plotly_chart(fig_line, use_container_width=True)
+st.plotly_chart(fig_line, use_container_width=True, config={"displayModeBar": False})
 
 # ── TOP PRODUCTS with heatbar ────────────────────────────────────────────────
 st.markdown('<p class="section-title">أعلى المنتجات طلبًا</p>', unsafe_allow_html=True)
@@ -1221,7 +1218,7 @@ elif _sel_perf_tp == "🔴 ضعيف (أقل من 70%)":
     top_prod = top_prod[top_prod["Pct"] < 70]
 
 top_prod_all = top_prod.reset_index()  # كل المنتجات للتصدير
-top_prod = top_prod.head(30).reset_index()  # أول 30 للعرض
+top_prod = top_prod.head(20).reset_index()  # أول 20 للعرض
 
 def _perf_style(pct):
     if pct >= 90:
@@ -1244,7 +1241,7 @@ for idx_p, row_p in top_prod.iterrows():
     pct_val  = row_p["Pct"]
     ps       = _perf_style(pct_val)
     heat_cells = "".join([
-        '<span style="display:inline-block;width:10px;height:10px;border-radius:2px;margin:1px;background:%s"></span>' % (ps["badge_bg"] if j < days_act else "#e0e0e0")
+        '<span style="display:inline-block;width:8px;height:8px;border-radius:1px;margin:1px;background:%s"></span>' % (ps["badge_bg"] if j < days_act else "#e0e0e0")
         for j in range(total_d)
     ])
     name_s = str(row_p["Name"])[:50] + ("..." if len(str(row_p["Name"])) > 50 else "")
@@ -1289,7 +1286,7 @@ c_df["Coupon"] = c_df["Coupon Code"].str.strip().str.upper()
 coup = c_df.groupby("Coupon").agg(
     Total_Discount=("Discount Amount","sum"),
     Orders=("Order #","nunique")
-).sort_values("Total_Discount", ascending=False).reset_index()
+).sort_values("Total_Discount", ascending=False).head(15).reset_index()
 coup = coup[coup["Total_Discount"]>0]
 coup_total = coup["Total_Discount"].sum()
 
@@ -1303,7 +1300,7 @@ with col1:
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         xaxis_title="", yaxis_title="", yaxis=dict(tickformat=",.0f"))
     fig_coup.update_traces(textposition="outside")
-    st.plotly_chart(fig_coup, use_container_width=True)
+    st.plotly_chart(fig_coup, use_container_width=True, config={"displayModeBar": False})
 
 with col2:
     max_disc_c = coup["Total_Discount"].max()
@@ -1345,7 +1342,7 @@ region_map = {
     'Aswan':'أسوان','Bani Souaif':'بني سويف','Kafr El-Sheikh':'كفر الشيخ',
     'North Coast':'الساحل الشمالي'
 }
-df_reg = df.copy()
+df_reg = df[["Customer Region","Value After Discounts","Order #","Qty Ordered"]].copy()
 df_reg["Region"] = df_reg["Customer Region"].map(region_map).fillna(df_reg["Customer Region"])
 region_df = df_reg.groupby("Region").agg(
     revenue=("Value After Discounts","sum"),
@@ -1367,14 +1364,14 @@ fig_reg.add_trace(go.Bar(
     textposition="outside"
 ))
 fig_reg.update_layout(
-    height=max(400, len(region_df)*22),
+    height=max(350, min(len(region_df),20)*22),
     margin=dict(t=10,b=10,l=10,r=60),
     paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
     xaxis=dict(tickformat=",.0f"),
     yaxis=dict(ticks="", tickfont=dict(size=11)),
     showlegend=False
 )
-st.plotly_chart(fig_reg, use_container_width=True)
+st.plotly_chart(fig_reg, use_container_width=True, config={"displayModeBar": False})
 
 max_rev_reg = region_df["revenue"].max()
 reg_rows = ""
@@ -1432,7 +1429,7 @@ with col_pay1:
         height=300, margin=dict(t=10,b=10,l=10,r=10),
         paper_bgcolor="rgba(0,0,0,0)", showlegend=False
     )
-    st.plotly_chart(fig_pay_donut, use_container_width=True)
+    st.plotly_chart(fig_pay_donut, use_container_width=True, config={"displayModeBar": False})
 
 with col_pay2:
     fig_pay_bar = px.bar(
@@ -1448,7 +1445,7 @@ with col_pay2:
         yaxis=dict(title="", tickformat=",.0f")
     )
     fig_pay_bar.update_traces(textposition="outside")
-    st.plotly_chart(fig_pay_bar, use_container_width=True)
+    st.plotly_chart(fig_pay_bar, use_container_width=True, config={"displayModeBar": False})
 
 max_rev_pay = pay_df["revenue"].max()
 pay_rows = ""
@@ -1480,17 +1477,5 @@ pay_html = (
 st.markdown(pay_html, unsafe_allow_html=True)
 _pay_dl = pay_df[["Payment Method","revenue","orders","aov","pct"]].rename(columns={"Payment Method":"طريقة الدفع","revenue":"المبيعات (ج)","orders":"الأوردرات","aov":"AOV (ج)","pct":"النسبة %"})
 st.download_button("⬇ تصدير Excel — طرق الدفع", to_excel(_pay_dl), "طرق_الدفع.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-# ── Render sticky header with actual date range ───────────────────────────
-st.markdown(f"""
-<div class="sticky-header">
-  <div>
-    <p class="title">📊 Raneen Sales Dashboard</p>
-    <p class="sub">✦ Created by Ahmed Khamis</p>
-  </div>
-  <div class="date-badge">
-    <p class="d1">الفترة المعروضة</p>
-    <p class="d2">{date_from.strftime("%b %d")} → {date_to.strftime("%b %d")}</p>
-  </div>
-</div>
-""", unsafe_allow_html=True)
+# sticky header removed for performance
 st.markdown(f"<p style='text-align:center;color:#aaa;font-size:11px'>Raneen Analytics · {date_min} → {date_max}</p>", unsafe_allow_html=True)
