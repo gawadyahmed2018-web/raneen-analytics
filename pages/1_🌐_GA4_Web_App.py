@@ -1,191 +1,1094 @@
-"""
-Raneen Analytics Hub — Home Page
-A unified command center summarizing all data sources:
-GA4 (Web + App), Meta Ads, and Google Ads — all via Windsor.ai.
-Each source has its own detailed page in the sidebar.
-"""
-
 import streamlit as st
 import pandas as pd
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
 from datetime import date, timedelta
 
 from windsor import get_windsor_data, safe_num, fmt_currency, fmt_number, fmt_pct
-from meta_windsor import get_meta_data
-from google_ads_windsor import get_google_ads_data
 
-st.set_page_config(page_title="Raneen Analytics Hub", page_icon="🎯", layout="wide", initial_sidebar_state="expanded")
+# ── PAGE CONFIG ───────────────────────────────────────────
+st.set_page_config(page_title="Raneen Analytics", page_icon="📊", layout="wide", initial_sidebar_state="expanded")
 
+# ── CSS ───────────────────────────────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600&display=swap');
 html, body, [class*="css"] { font-family: 'IBM Plex Sans Arabic', sans-serif; }
-#MainMenu, footer { visibility: hidden; }
-.block-container { padding: 1.5rem 2rem 2rem; max-width: 1400px; }
-.hub-card { background: #FFFFFF; border: 1px solid #E2E6EA; border-radius: 16px; padding: 24px; margin-bottom: 16px; transition: all .2s; height: 100%; }
-.hub-card:hover { border-color: #3266AD; box-shadow: 0 4px 20px rgba(50,102,173,0.08); }
-.source-icon { font-size: 32px; margin-bottom: 12px; }
-.source-title { font-size: 18px; font-weight: 700; color: #1A1A2E; margin-bottom: 4px; }
-.source-sub { font-size: 12px; color: #9A9A8E; margin-bottom: 18px; }
-.metric-row { display: flex; justify-content: space-between; padding: 8px 0; border-top: 1px solid #F0F2F5; }
-.metric-label { font-size: 12px; color: #73726C; }
-.metric-value { font-size: 14px; font-weight: 600; color: #1A1A2E; }
-.big-metric { font-size: 28px; font-weight: 700; color: #1A1A2E; }
-.hub-header { display: flex; align-items: center; gap: 14px; padding: 10px 0 24px; border-bottom: 1px solid #E2E6EA; margin-bottom: 28px; }
+#MainMenu, footer, header { visibility: hidden; }
+.block-container { padding: 1.2rem 2rem 2rem; max-width: 1400px; }
+section[data-testid="stSidebar"] { background: #F5F7FA; border-right: 1px solid #E2E6EA; }
+section[data-testid="stSidebar"] .stSelectbox label,
+section[data-testid="stSidebar"] .stTextInput label { color: #73726C !important; font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: .05em; }
+.kpi-card { background: #FFFFFF; border: 1px solid #E2E6EA; border-radius: 12px; padding: 18px 20px; position: relative; overflow: hidden; transition: border-color .2s; }
+.kpi-card:hover { border-color: #3266AD; }
+.kpi-accent { position: absolute; top: 0; left: 0; right: 0; height: 3px; border-radius: 12px 12px 0 0; }
+.kpi-label { font-size: 11px; color: #73726C; font-weight: 500; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 8px; }
+.kpi-value { font-size: 26px; font-weight: 600; color: #1A1A2E; line-height: 1; margin-bottom: 6px; }
+.kpi-change { font-size: 12px; } .kpi-sub { font-size: 11px; color: #9A9A8E; margin-top: 2px; }
+.kpi-split { display: flex; align-items: center; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px dashed #E2E6EA; font-size: 11px; }
+.kpi-split-web { color: #3266AD; font-weight: 500; }
+.kpi-split-app { color: #7F77DD; font-weight: 500; }
+.kpi-split-sep { color: #D0D5DD; }
+.up { color: #1D9E75; } .down { color: #D85A30; } .warn { color: #EF9F27; } .neu { color: #888780; }
+.section-header { display: flex; align-items: center; gap: 10px; padding: 6px 0 10px; border-bottom: 1px solid #E2E6EA; margin-bottom: 16px; }
+.section-dot { width: 8px; height: 8px; border-radius: 50%; }
+.section-title { font-size: 15px; font-weight: 600; color: #1A1A2E; }
+.section-sub { font-size: 11px; color: #73726C; margin-left: auto; }
+.insight-card { border-radius: 8px; padding: 12px 14px; margin-bottom: 8px; font-size: 13px; line-height: 1.6; border-left: 4px solid; }
+.insight-red { background: #FEF3EF; border-color: #D85A30; color: #A33A15; }
+.insight-amber { background: #FEF9EF; border-color: #EF9F27; color: #8A5A10; }
+.insight-green { background: #EAF7F2; border-color: #1D9E75; color: #0D6B4F; }
+.insight-blue { background: #EAF0FB; border-color: #3266AD; color: #1A4A8A; }
+.top-bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 0 16px; border-bottom: 1px solid #E2E6EA; margin-bottom: 20px; }
+.brand-name { font-size: 22px; font-weight: 700; color: #1A1A2E; } .brand-name span { color: #3266AD; }
+.live-badge { display: inline-flex; align-items: center; gap: 6px; background: #EAF7F2; border: 1px solid rgba(29,158,117,.4); border-radius: 20px; padding: 4px 12px; font-size: 11px; font-weight: 500; color: #1D9E75; }
+.live-dot { width: 6px; height: 6px; border-radius: 50%; background: #1D9E75; animation: blink 2s ease-in-out infinite; display: inline-block; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+.funnel-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.funnel-label { font-size: 12px; color: #73726C; min-width: 120px; }
+.funnel-track { flex: 1; height: 28px; background: #F0F2F5; border-radius: 4px; overflow: hidden; }
+.funnel-fill { height: 100%; border-radius: 4px; display: flex; align-items: center; padding-left: 10px; font-size: 11px; font-weight: 600; color: #fff; }
+.funnel-pct { font-size: 12px; min-width: 45px; text-align: right; font-weight: 600; }
+.bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.bar-name { font-size: 12px; color: #73726C; min-width: 130px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar-track { flex: 1; height: 8px; background: #F0F2F5; border-radius: 4px; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 4px; }
+.bar-val { font-size: 12px; color: #1A1A2E; min-width: 70px; text-align: right; font-weight: 500; }
+.styled-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.styled-table th { background: #F5F7FA; color: #73726C; font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; padding: 8px 10px; border-bottom: 1px solid #E2E6EA; text-align: left; }
+.styled-table td { padding: 9px 10px; border-bottom: 1px solid #F0F2F5; color: #1A1A2E; vertical-align: middle; }
+.styled-table tr:hover td { background: rgba(50,102,173,.06); }
+.badge { display: inline-block; font-size: 10px; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
+.badge-green { background: rgba(29,158,117,.2); color: #1D9E75; }
+.badge-red { background: rgba(216,90,48,.2); color: #D85A30; }
+.badge-amber { background: rgba(239,159,39,.2); color: #EF9F27; }
+.badge-blue { background: rgba(50,102,173,.2); color: #3266AD; }
+.badge-purple { background: rgba(127,119,221,.2); color: #7F77DD; }
+.badge-gray { background: rgba(136,135,128,.2); color: #888780; }
+.source-badge-web { background: rgba(50,102,173,.15); color: #3266AD; }
+.source-badge-app { background: rgba(127,119,221,.15); color: #7F77DD; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── Sidebar ──────────────────────────────────────────────
+PLOT_LAYOUT = dict(
+    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+    font=dict(family="IBM Plex Sans Arabic", color="#73726C", size=11),
+    margin=dict(l=0, r=0, t=10, b=0),
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=11), bgcolor="rgba(0,0,0,0)"),
+    xaxis=dict(gridcolor="#E8EDF2", linecolor="#D0D5DD", tickfont=dict(size=10)),
+    yaxis=dict(gridcolor="#E8EDF2", linecolor="#D0D5DD", tickfont=dict(size=10)),
+)
+
+# ── SIDEBAR ───────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("## 🎯 Analytics Hub")
-    st.caption("مركز التحكم الموحّد — Raneen")
+    st.markdown("""<div style="padding:16px 0 20px">
+      <div style="font-size:18px;font-weight:700;color:#1A1A2E"><span style="color:#3266AD">●</span> Raneen</div>
+      <div style="font-size:11px;color:#73726C;margin-top:4px">Analytics Dashboard — Web + App</div>
+    </div>""", unsafe_allow_html=True)
+    st.success("✅ Connected to GA4 (Web + App)", icon="📊")
     st.markdown("---")
-    date_preset = st.selectbox(
-        "Date Range",
-        ["last_30d", "last_7d", "last_14d", "last_90d", "this_month", "last_month"],
-        format_func=lambda x: {
-            "last_7d": "Last 7 Days", "last_14d": "Last 14 Days", "last_30d": "Last 30 Days",
-            "last_90d": "Last 90 Days", "this_month": "This Month", "last_month": "Last Month",
-        }.get(x, x),
+
+    source_filter = st.radio(
+        "Data Source",
+        ["both", "web", "app"],
+        format_func=lambda x: {"both": "🌐📱 Web + App", "web": "🌐 Web Only", "app": "📱 App Only"}.get(x, x),
+        horizontal=False,
     )
+
     st.markdown("---")
-    st.markdown("**الصفحات:**")
-    st.markdown("🌐 GA4 Web + App")
-    st.markdown("📣 Meta Ads")
-    st.markdown("🔵 Google Ads")
-    st.caption("اختر صفحة من القائمة فوق للتفاصيل الكاملة")
+    date_preset = st.selectbox("Date Range",
+        ["last_30d", "last_7d", "last_14d", "last_90d", "this_month", "last_month", "custom"],
+        format_func=lambda x: {"last_7d": "Last 7 Days", "last_14d": "Last 14 Days", "last_30d": "Last 30 Days",
+                                "last_90d": "Last 90 Days", "this_month": "This Month", "last_month": "Last Month",
+                                "custom": "Custom Range"}.get(x, x))
 
-# ── Header ───────────────────────────────────────────────
-st.markdown("""
-<div class="hub-header">
-  <span style="font-size:36px;">🎯</span>
-  <div>
-    <div style="font-size:26px; font-weight:800; color:#1A1A2E;">Raneen Analytics Hub</div>
-    <div style="font-size:12px; color:#9A9A8E;">مركز موحّد لكل مصادر البيانات — GA4 · Meta Ads · Google Ads</div>
-  </div>
-</div>
-""", unsafe_allow_html=True)
+    if date_preset == "custom":
+        custom_from = st.date_input("From", date.today() - timedelta(days=30))
+        custom_to = st.date_input("To", date.today() - timedelta(days=1))
+
+    st.markdown("---")
+    active_tab = st.radio("Section",
+        ["Overview", "Funnel", "Traffic", "Devices", "E-Commerce", "Campaigns"],
+        label_visibility="collapsed")
+
+    st.markdown("---")
+    st.markdown('<div style="font-size:10px;color:#9A9A8E;line-height:1.6">Data source: Google Analytics 4<br>via Windsor.ai<br><span style="color:#1D9E75">● Live</span> — refreshes on load</div>', unsafe_allow_html=True)
+
+# ── TOP BAR ───────────────────────────────────────────────
+source_label = {"both": "Web + App", "web": "Web Only", "app": "App Only"}.get(source_filter, "")
+st.markdown(f"""<div class="top-bar">
+  <div class="brand-name"><span>Raneen</span> Analytics — {source_label}</div>
+  <div class="live-badge"><span class="live-dot"></span> Live via Windsor · GA4</div>
+</div>""", unsafe_allow_html=True)
+
+# ── Resolve custom dates ─────────────────────────
+if date_preset == "custom":
+    _d_from = str(custom_from)
+    _d_to = str(custom_to)
+else:
+    _d_from, _d_to = None, None
 
 
-# ── Data loaders (summary level only) ────────────────────
+# ── LOAD DATA (all aggregations now pull source=source_filter) ──
 @st.cache_data(ttl=300, show_spinner=False)
-def load_ga4_summary(preset):
-    df = get_windsor_data(
-        ["date", "sessions", "purchase_revenue", "transactions"],
-        preset, source="both",
-    )
-    return df
-
-
-@st.cache_data(ttl=300, show_spinner=False)
-def load_meta_summary(preset):
-    return get_meta_data(
-        ["date", "spend", "actions_purchase", "action_values_purchase", "clicks", "impressions"],
-        preset,
+def load_overview(preset, d_from, d_to, src):
+    return get_windsor_data(
+        ["date", "sessions", "active_users", "bounce_rate", "average_session_duration",
+         "purchase_revenue", "transactions", "add_to_carts", "checkouts"],
+        preset, d_from, d_to, source=src,
     )
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def load_gads_summary(preset):
-    return get_google_ads_data(
-        ["date", "spend", "conversions", "conversions_value", "clicks", "impressions"],
-        preset,
+def load_channels(preset, d_from, d_to, src):
+    return get_windsor_data(
+        ["session_default_channel_group", "sessions", "purchase_revenue", "transactions", "add_to_carts", "checkouts"],
+        preset, d_from, d_to, source=src,
     )
 
 
-with st.spinner("⏳ جاري تحميل ملخص كل المصادر..."):
-    df_ga4 = load_ga4_summary(date_preset)
-    df_meta = load_meta_summary(date_preset)
-    df_gads = load_gads_summary(date_preset)
+@st.cache_data(ttl=300, show_spinner=False)
+def load_devices(preset, d_from, d_to, src):
+    return get_windsor_data(
+        ["devicecategory", "sessions", "bounce_rate", "engagement_rate", "purchase_revenue", "transactions"],
+        preset, d_from, d_to, source=src,
+    )
 
-# ── Compute summaries ────────────────────────────────────
-# GA4
-ga4_sessions = safe_num(df_ga4["sessions"].sum()) if not df_ga4.empty and "sessions" in df_ga4.columns else 0
-ga4_revenue = safe_num(df_ga4["purchase_revenue"].sum()) if not df_ga4.empty and "purchase_revenue" in df_ga4.columns else 0
-ga4_orders = safe_num(df_ga4["transactions"].sum()) if not df_ga4.empty and "transactions" in df_ga4.columns else 0
 
-# Meta
-meta_spend = meta_conv = meta_conv_val = 0
-if not df_meta.empty:
-    for c in ["spend", "actions_purchase", "action_values_purchase"]:
-        if c in df_meta.columns:
-            df_meta[c] = df_meta[c].apply(safe_num)
-    meta_spend = df_meta["spend"].sum() if "spend" in df_meta.columns else 0
-    meta_conv = df_meta["actions_purchase"].sum() if "actions_purchase" in df_meta.columns else 0
-    meta_conv_val = df_meta["action_values_purchase"].sum() if "action_values_purchase" in df_meta.columns else 0
-meta_roas = (meta_conv_val / meta_spend) if meta_spend > 0 else 0
+@st.cache_data(ttl=300, show_spinner=False)
+def load_page_performance(preset, d_from, d_to, src):
+    # Fetch each field group separately so an invalid/renamed field on
+    # Windsor's side doesn't silently kill the entire request and leave
+    # the whole page-performance section empty. page_path + sessions is
+    # confirmed working live; the rest are merged in only if available.
+    df_base = get_windsor_data(["page_path", "sessions"], preset, d_from, d_to, source=src)
+    if df_base.empty:
+        return pd.DataFrame()
 
-# Google Ads
-gads_spend = gads_conv = gads_conv_val = 0
-if not df_gads.empty:
-    for c in ["spend", "conversions", "conversions_value"]:
-        if c in df_gads.columns:
-            df_gads[c] = df_gads[c].apply(safe_num)
-    gads_spend = df_gads["spend"].sum() if "spend" in df_gads.columns else 0
-    gads_conv = df_gads["conversions"].sum() if "conversions" in df_gads.columns else 0
-    gads_conv_val = df_gads["conversions_value"].sum() if "conversions_value" in df_gads.columns else 0
-gads_roas = (gads_conv_val / gads_spend) if gads_spend > 0 else 0
+    result = df_base
 
-# Combined ad spend
-total_ad_spend = meta_spend + gads_spend
+    for extra_fields in (
+        ["page_path", "bounce_rate"],
+        ["page_path", "average_session_duration"],
+        ["page_path", "purchase_revenue", "transactions"],
+    ):
+        df_extra = get_windsor_data(extra_fields, preset, d_from, d_to, source=src)
+        if not df_extra.empty:
+            try:
+                result = pd.merge(result, df_extra, on=["page_path", "source"], how="left")
+            except Exception:
+                pass  # keep going with what we already have
 
-# ── Top summary strip ────────────────────────────────────
-s1, s2, s3, s4 = st.columns(4)
-with s1:
-    st.markdown(f'<div class="hub-card" style="text-align:center;"><div class="metric-label">إجمالي المبيعات (GA4)</div><div class="big-metric" style="color:#1D9E75;">{fmt_currency(ga4_revenue)}</div><div class="source-sub">{fmt_number(ga4_orders)} طلب</div></div>', unsafe_allow_html=True)
-with s2:
-    st.markdown(f'<div class="hub-card" style="text-align:center;"><div class="metric-label">إجمالي الإنفاق الإعلاني</div><div class="big-metric" style="color:#D85A30;">{fmt_currency(total_ad_spend)}</div><div class="source-sub">Meta + Google</div></div>', unsafe_allow_html=True)
-with s3:
-    blended_roas = (ga4_revenue / total_ad_spend) if total_ad_spend > 0 else 0
-    st.markdown(f'<div class="hub-card" style="text-align:center;"><div class="metric-label">Blended ROAS</div><div class="big-metric" style="color:#7F77DD;">{blended_roas:.2f}x</div><div class="source-sub">مبيعات ÷ إنفاق</div></div>', unsafe_allow_html=True)
-with s4:
-    st.markdown(f'<div class="hub-card" style="text-align:center;"><div class="metric-label">Sessions (GA4)</div><div class="big-metric" style="color:#3266AD;">{fmt_number(ga4_sessions)}</div><div class="source-sub">Web + App</div></div>', unsafe_allow_html=True)
+    return result
 
-st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
 
-# ── Source cards ─────────────────────────────────────────
-col1, col2, col3 = st.columns(3)
+@st.cache_data(ttl=300, show_spinner=False)
+def load_new_returning(preset, d_from, d_to, src):
+    return get_windsor_data(
+        ["new_vs_returning", "sessions", "active_users", "purchase_revenue", "transactions"],
+        preset, d_from, d_to, source=src,
+    )
 
-with col1:
-    st.markdown(f"""
-    <div class="hub-card">
-      <div class="source-icon">🌐</div>
-      <div class="source-title">GA4 — Web + App</div>
-      <div class="source-sub">Google Analytics 4</div>
-      <div class="metric-row"><span class="metric-label">Revenue</span><span class="metric-value">{fmt_currency(ga4_revenue)}</span></div>
-      <div class="metric-row"><span class="metric-label">Orders</span><span class="metric-value">{fmt_number(ga4_orders)}</span></div>
-      <div class="metric-row"><span class="metric-label">Sessions</span><span class="metric-value">{fmt_number(ga4_sessions)}</span></div>
-      <div class="metric-row"><span class="metric-label">AOV</span><span class="metric-value">{fmt_currency(ga4_revenue/ga4_orders if ga4_orders else 0, 0)}</span></div>
-    </div>
-    """, unsafe_allow_html=True)
-    st.page_link("pages/1_🌐_GA4_Web_App.py", label="افتح تفاصيل GA4 ←", icon="🌐")
 
-with col2:
-    st.markdown(f"""
-    <div class="hub-card">
-      <div class="source-icon">📣</div>
-      <div class="source-title">Meta Ads</div>
-      <div class="source-sub">Facebook + Instagram</div>
-      <div class="metric-row"><span class="metric-label">Spend</span><span class="metric-value">{fmt_currency(meta_spend)}</span></div>
-      <div class="metric-row"><span class="metric-label">Purchases</span><span class="metric-value">{fmt_number(meta_conv)}</span></div>
-      <div class="metric-row"><span class="metric-label">Conv. Value</span><span class="metric-value">{fmt_currency(meta_conv_val)}</span></div>
-      <div class="metric-row"><span class="metric-label">ROAS</span><span class="metric-value">{meta_roas:.2f}x</span></div>
-    </div>
-    """, unsafe_allow_html=True)
-    st.page_link("pages/2_📣_Meta_Ads.py", label="افتح تفاصيل Meta ←", icon="📣")
+@st.cache_data(ttl=300, show_spinner=False)
+def load_campaigns(preset, d_from, d_to, src):
+    return get_windsor_data(
+        ["session_google_ads_campaign_name", "sessions", "purchase_revenue", "transactions", "add_to_carts", "checkouts"],
+        preset, d_from, d_to, source=src,
+    )
 
-with col3:
-    st.markdown(f"""
-    <div class="hub-card">
-      <div class="source-icon">🔵</div>
-      <div class="source-title">Google Ads</div>
-      <div class="source-sub">Search + Shopping + PMax</div>
-      <div class="metric-row"><span class="metric-label">Spend</span><span class="metric-value">{fmt_currency(gads_spend)}</span></div>
-      <div class="metric-row"><span class="metric-label">Conversions</span><span class="metric-value">{fmt_number(gads_conv)}</span></div>
-      <div class="metric-row"><span class="metric-label">Conv. Value</span><span class="metric-value">{fmt_currency(gads_conv_val)}</span></div>
-      <div class="metric-row"><span class="metric-label">ROAS</span><span class="metric-value">{gads_roas:.2f}x</span></div>
-    </div>
-    """, unsafe_allow_html=True)
-    st.page_link("pages/3_🔵_Google_Ads.py", label="افتح تفاصيل Google Ads ←", icon="🔵")
 
-st.markdown("<div style='height:24px'></div>", unsafe_allow_html=True)
-st.caption("💡 كل الأرقام هنا ملخصة. افتح صفحة أي مصدر من القائمة الجانبية للتفاصيل الكاملة، الرسوم البيانية، والتصدير.")
+@st.cache_data(ttl=300, show_spinner=False)
+def load_categories(preset, d_from, d_to, src):
+    return get_windsor_data(["item_category", "gross_item_revenue", "items_purchased", "items_viewed", "items_added_to_cart"], preset, d_from, d_to, source=src)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_products(preset, d_from, d_to, src):
+    return get_windsor_data(["item_name", "item_revenue", "items_purchased", "items_viewed", "items_added_to_cart"], preset, d_from, d_to, source=src)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_subcategory(preset, d_from, d_to, src):
+    return get_windsor_data(["item_category", "item_category2", "gross_item_revenue", "items_purchased", "items_viewed", "items_added_to_cart"], preset, d_from, d_to, source=src)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
+def load_campaign_products(preset, d_from, d_to, src):
+    return get_windsor_data(["session_google_ads_campaign_name", "item_name", "item_id", "item_revenue", "items_purchased", "item_price"], preset, d_from, d_to, source=src)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_meta_campaign_products(preset, d_from, d_to, src):
+    return get_windsor_data(
+        ["session_manual_campaign_name", "item_name", "item_id", "item_revenue", "items_purchased", "item_price"],
+        preset, d_from, d_to, source=src
+    )
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_meta_campaigns(preset, d_from, d_to, src):
+    return get_windsor_data(["session_manual_campaign_name", "sessions", "purchase_revenue", "transactions", "add_to_carts"], preset, d_from, d_to, source=src)
+
+
+# ── Load only Overview data upfront (lightweight, needed for KPIs) ──
+with st.spinner("⏳ Loading GA4 data..."):
+    df_ov = load_overview(date_preset, _d_from, _d_to, source_filter)
+
+if df_ov.empty:
+    st.error("❌ Could not load data. Windsor API error — check logs, or try refreshing.")
+    st.stop()
+
+# ── Lazy-load remaining data only when the relevant tab is active ──
+df_ch = pd.DataFrame()
+df_dv = pd.DataFrame()
+df_nr = pd.DataFrame()
+df_cp = pd.DataFrame()
+df_pg = pd.DataFrame()
+
+if active_tab == "Traffic":
+    with st.spinner("⏳ Loading Traffic data..."):
+        df_ch = load_channels(date_preset, _d_from, _d_to, source_filter)
+        df_pg = load_page_performance(date_preset, _d_from, _d_to, source_filter)
+
+elif active_tab == "Devices":
+    with st.spinner("⏳ Loading Devices data..."):
+        df_dv = load_devices(date_preset, _d_from, _d_to, source_filter)
+
+elif active_tab == "Funnel":
+    with st.spinner("⏳ Loading Funnel data..."):
+        df_nr = load_new_returning(date_preset, _d_from, _d_to, source_filter)
+
+elif active_tab == "Campaigns":
+    with st.spinner("⏳ Loading Campaigns data..."):
+        df_cp = load_campaigns(date_preset, _d_from, _d_to, source_filter)
+
+# Overview also needs new_vs_returning for the bottom section
+if active_tab == "Overview" and df_nr.empty:
+    with st.spinner(""):
+        df_nr = load_new_returning(date_preset, _d_from, _d_to, source_filter)
+
+# ── TOTALS ────────────────────────────────────────────────
+tot_sessions = safe_num(df_ov["sessions"].sum()) if "sessions" in df_ov else 0
+tot_revenue = safe_num(df_ov["purchase_revenue"].sum()) if "purchase_revenue" in df_ov else 0
+tot_orders = safe_num(df_ov["transactions"].sum()) if "transactions" in df_ov else 0
+tot_carts = safe_num(df_ov["add_to_carts"].sum()) if "add_to_carts" in df_ov else 0
+tot_checkouts = safe_num(df_ov["checkouts"].sum()) if "checkouts" in df_ov else 0
+avg_bounce = safe_num(df_ov["bounce_rate"].mean()) * 100 if "bounce_rate" in df_ov else 0
+avg_session = safe_num(df_ov["average_session_duration"].mean()) if "average_session_duration" in df_ov else 0
+aov = tot_revenue / tot_orders if tot_orders > 0 else 0
+cvr = tot_orders / tot_sessions * 100 if tot_sessions > 0 else 0
+cart_abandon = (1 - tot_orders / tot_carts) * 100 if tot_carts > 0 else 0
+avg_session_m = int(avg_session // 60)
+avg_session_s = int(avg_session % 60)
+
+# ── Per-source breakdown (for the small "Web: x · App: y" line under each KPI card) ──
+def _src_totals(df, col, agg="sum"):
+    """Return (web_value, app_value) for a given column, source-split."""
+    if df.empty or "source" not in df.columns or col not in df.columns:
+        return 0, 0
+    g = df.groupby("source")[col].apply(lambda s: s.apply(safe_num).sum() if agg == "sum" else s.apply(safe_num).mean())
+    return safe_num(g.get("web", 0)), safe_num(g.get("app", 0))
+
+ses_w, ses_a = _src_totals(df_ov, "sessions")
+rev_w, rev_a = _src_totals(df_ov, "purchase_revenue")
+ord_w, ord_a = _src_totals(df_ov, "transactions")
+cart_w, cart_a = _src_totals(df_ov, "add_to_carts")
+bounce_w, bounce_a = _src_totals(df_ov, "bounce_rate", agg="mean")
+sess_dur_w, sess_dur_a = _src_totals(df_ov, "average_session_duration", agg="mean")
+
+aov_w = rev_w / ord_w if ord_w > 0 else 0
+aov_a = rev_a / ord_a if ord_a > 0 else 0
+cvr_w = ord_w / ses_w * 100 if ses_w > 0 else 0
+cvr_a = ord_a / ses_a * 100 if ses_a > 0 else 0
+bounce_w_pct = bounce_w * 100
+bounce_a_pct = bounce_a * 100
+sess_dur_w_m, sess_dur_w_s = int(sess_dur_w // 60), int(sess_dur_w % 60)
+sess_dur_a_m, sess_dur_a_s = int(sess_dur_a // 60), int(sess_dur_a % 60)
+
+
+# ── UI HELPERS ────────────────────────────────────────────
+def kpi_card(label, value, change_txt, change_cls, sub="", accent_color="#3266AD", web_val=None, app_val=None):
+    split_html = ""
+    if web_val is not None and app_val is not None:
+        split_html = f'<div class="kpi-split"><span class="kpi-split-web">🌐 {web_val}</span><span class="kpi-split-sep">·</span><span class="kpi-split-app">📱 {app_val}</span></div>'
+    sub_html = f'<div class="kpi-sub">{sub}</div>' if sub else ""
+    return (
+        f'<div class="kpi-card"><div class="kpi-accent" style="background:{accent_color}"></div>'
+        f'<div class="kpi-label">{label}</div><div class="kpi-value">{value}</div>'
+        f'<div class="kpi-change {change_cls}">{change_txt}</div>'
+        f'{sub_html}{split_html}</div>'
+    )
+
+
+def section_header(title, sub="", color="#3266AD"):
+    return f"""<div class="section-header"><div class="section-dot" style="background:{color}"></div>
+    <div class="section-title">{title}</div>
+    {'<div class="section-sub">' + sub + '</div>' if sub else ''}</div>"""
+
+
+def bar_html(name, pct, color, val_str):
+    return f"""<div class="bar-row"><div class="bar-name">{name}</div>
+    <div class="bar-track"><div class="bar-fill" style="width:{max(pct,1)}%;background:{color}"></div></div>
+    <div class="bar-val">{val_str}</div></div>"""
+
+
+def insight(icon, title, body, cls):
+    return f'<div class="insight-card {cls}"><b>{icon} {title}</b><br/>{body}</div>'
+
+
+def export_csv_button(df, filename="export.csv", label="📥 Export CSV"):
+    import io
+    buf = io.BytesIO()
+    df.to_csv(buf, index=False, encoding="utf-8-sig")
+    st.download_button(label=label, data=buf.getvalue(), file_name=filename, mime="text/csv", use_container_width=False)
+
+
+def source_badge(src):
+    if src == "web":
+        return '<span class="badge source-badge-web">🌐 Web</span>'
+    elif src == "app":
+        return '<span class="badge source-badge-app">📱 App</span>'
+    return ""
+
+
+# ═══════════════════════════════════════════════════════════
+# OVERVIEW
+# ═══════════════════════════════════════════════════════════
+if active_tab == "Overview":
+    st.markdown(section_header("Overview", "Key Performance Indicators", "#3266AD"), unsafe_allow_html=True)
+
+    c1, c2, c3, c4 = st.columns(4)
+    _show_split = source_filter == "both"
+    with c1: st.markdown(kpi_card("Sessions", fmt_number(tot_sessions), "▲ Live GA4 Data", "up", accent_color="#3266AD",
+                                   web_val=fmt_number(ses_w) if _show_split else None, app_val=fmt_number(ses_a) if _show_split else None), unsafe_allow_html=True)
+    with c2: st.markdown(kpi_card("Revenue", fmt_currency(tot_revenue), "▲ Purchase Revenue", "up", accent_color="#1D9E75",
+                                   web_val=fmt_currency(rev_w) if _show_split else None, app_val=fmt_currency(rev_a) if _show_split else None), unsafe_allow_html=True)
+    with c3: st.markdown(kpi_card("Orders", fmt_number(tot_orders), "▲ Transactions", "up", accent_color="#1D9E75",
+                                   web_val=fmt_number(ord_w) if _show_split else None, app_val=fmt_number(ord_a) if _show_split else None), unsafe_allow_html=True)
+    with c4: st.markdown(kpi_card("AOV", fmt_currency(aov, 0), "متوسط قيمة الطلب", "neu", accent_color="#3266AD",
+                                   web_val=fmt_currency(aov_w, 0) if _show_split else None, app_val=fmt_currency(aov_a, 0) if _show_split else None), unsafe_allow_html=True)
+
+    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+    c5, c6, c7, c8 = st.columns(4)
+    with c5: st.markdown(kpi_card("Add to Cart", fmt_number(tot_carts), f"⚠ Cart Abandon {cart_abandon:.1f}%", "warn", accent_color="#EF9F27",
+                                   web_val=fmt_number(cart_w) if _show_split else None, app_val=fmt_number(cart_a) if _show_split else None), unsafe_allow_html=True)
+    with c6: st.markdown(kpi_card("Bounce Rate", fmt_pct(avg_bounce), "▼ Monitor carefully", "down" if avg_bounce > 50 else "warn", accent_color="#D85A30",
+                                   web_val=fmt_pct(bounce_w_pct) if _show_split else None, app_val=fmt_pct(bounce_a_pct) if _show_split else None), unsafe_allow_html=True)
+    with c7: st.markdown(kpi_card("Avg Session", f"{avg_session_m}:{avg_session_s:02d} min", "▲ Engagement", "up", accent_color="#7F77DD",
+                                   web_val=f"{sess_dur_w_m}:{sess_dur_w_s:02d}" if _show_split else None, app_val=f"{sess_dur_a_m}:{sess_dur_a_s:02d}" if _show_split else None), unsafe_allow_html=True)
+    with c8: st.markdown(kpi_card("CVR", fmt_pct(cvr, 2), "⚠ Needs improvement" if cvr < 1 else "▲ Good", "warn" if cvr < 1 else "up", accent_color="#D85A30" if cvr < 1 else "#1D9E75",
+                                   web_val=fmt_pct(cvr_w, 2) if _show_split else None, app_val=fmt_pct(cvr_a, 2) if _show_split else None), unsafe_allow_html=True)
+
+    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+
+    # ── Web vs App split (only shown when source_filter == "both") ──
+    if source_filter == "both" and "source" in df_ov.columns:
+        st.markdown(section_header("Web vs App Split", "Revenue & Sessions by Source", "#7F77DD"), unsafe_allow_html=True)
+        split = df_ov.groupby("source").agg(
+            sessions=("sessions", "sum"),
+            purchase_revenue=("purchase_revenue", "sum"),
+            transactions=("transactions", "sum"),
+        ).reset_index()
+
+        col_w, col_a = st.columns(2)
+        web_row = split[split["source"] == "web"]
+        app_row = split[split["source"] == "app"]
+
+        with col_w:
+            rev_w = safe_num(web_row["purchase_revenue"].sum()) if not web_row.empty else 0
+            ses_w = safe_num(web_row["sessions"].sum()) if not web_row.empty else 0
+            ord_w = safe_num(web_row["transactions"].sum()) if not web_row.empty else 0
+            st.markdown(kpi_card("🌐 Web Revenue", fmt_currency(rev_w), f"{fmt_number(ses_w)} sessions · {fmt_number(ord_w)} orders", "up", accent_color="#3266AD"), unsafe_allow_html=True)
+
+        with col_a:
+            rev_a = safe_num(app_row["purchase_revenue"].sum()) if not app_row.empty else 0
+            ses_a = safe_num(app_row["sessions"].sum()) if not app_row.empty else 0
+            ord_a = safe_num(app_row["transactions"].sum()) if not app_row.empty else 0
+            st.markdown(kpi_card("📱 App Revenue", fmt_currency(rev_a), f"{fmt_number(ses_a)} sessions · {fmt_number(ord_a)} orders", "up", accent_color="#7F77DD"), unsafe_allow_html=True)
+
+        st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+        fig_split = go.Figure(go.Pie(
+            labels=["Web", "App"], values=[rev_w, rev_a],
+            marker_colors=["#3266AD", "#7F77DD"], hole=0.6,
+            textinfo="label+percent", textfont_size=12,
+        ))
+        fig_split.update_layout(**PLOT_LAYOUT, height=240)
+        st.plotly_chart(fig_split, use_container_width=True)
+
+        st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+
+    if "date" in df_ov.columns:
+        df_ts = df_ov.copy()
+        df_ts["date"] = pd.to_datetime(df_ts["date"], errors="coerce")
+        df_ts = df_ts.dropna(subset=["date"])
+        # Aggregate across source if "both" is selected, so the time series is combined
+        df_ts = df_ts.groupby("date", as_index=False).sum(numeric_only=True).sort_values("date")
+
+        col_l, col_r = st.columns(2)
+        with col_l:
+            st.markdown(section_header("Revenue Over Time", "", "#1D9E75"), unsafe_allow_html=True)
+            fig = make_subplots(specs=[[{"secondary_y": True}]])
+            fig.add_trace(go.Bar(x=df_ts["date"], y=df_ts["purchase_revenue"] / 1000, name="Revenue K ج", marker_color="#3266AD", opacity=0.8), secondary_y=False)
+            fig.add_trace(go.Scatter(x=df_ts["date"], y=df_ts["transactions"], name="Orders", line=dict(color="#1D9E75", width=2), mode="lines+markers", marker_size=4), secondary_y=True)
+            fig.update_layout(**PLOT_LAYOUT, height=260)
+            st.plotly_chart(fig, use_container_width=True)
+
+        with col_r:
+            st.markdown(section_header("Sessions & Bounce Rate", "", "#D85A30"), unsafe_allow_html=True)
+            fig2 = make_subplots(specs=[[{"secondary_y": True}]])
+            fig2.add_trace(go.Bar(x=df_ts["date"], y=df_ts["sessions"] / 1000, name="Sessions K", marker_color="rgba(50,102,173,0.7)"), secondary_y=False)
+            if "bounce_rate" in df_ts.columns:
+                fig2.add_trace(go.Scatter(x=df_ts["date"], y=df_ts["bounce_rate"] * 100, name="Bounce %", line=dict(color="#D85A30", width=2), mode="lines", fill="tozeroy", fillcolor="rgba(216,90,48,0.1)"), secondary_y=True)
+            fig2.update_layout(**PLOT_LAYOUT, height=260)
+            st.plotly_chart(fig2, use_container_width=True)
+
+    st.markdown(section_header("New vs Returning", "Revenue Split", "#7F77DD"), unsafe_allow_html=True)
+    if not df_nr.empty and "new_vs_returning" in df_nr.columns:
+        nr = df_nr[df_nr["new_vs_returning"].isin(["new", "returning"])].copy()
+        for col in ["purchase_revenue", "sessions", "transactions"]:
+            if col in nr.columns:
+                nr[col] = nr[col].apply(safe_num)
+        ret = nr[nr["new_vs_returning"] == "returning"]
+        new = nr[nr["new_vs_returning"] == "new"]
+        ret_rev = ret["purchase_revenue"].sum()
+        new_rev = new["purchase_revenue"].sum()
+        tot_r = ret_rev + new_rev
+        ret_pct = ret_rev / tot_r * 100 if tot_r else 0
+
+        c1, c2, c3, c4 = st.columns(4)
+        with c1: st.markdown(kpi_card("Returning Sessions", fmt_number(ret["sessions"].sum()), "Loyal customers", "neu", accent_color="#1D9E75"), unsafe_allow_html=True)
+        with c2: st.markdown(kpi_card("Returning Revenue", fmt_currency(ret_rev), f"▲ {ret_pct:.1f}% of total", "up", accent_color="#1D9E75"), unsafe_allow_html=True)
+        with c3:
+            rc = ret["transactions"].sum() / ret["sessions"].sum() * 100 if ret["sessions"].sum() > 0 else 0
+            st.markdown(kpi_card("Returning CVR", fmt_pct(rc, 2), "vs New users", "up", accent_color="#1D9E75"), unsafe_allow_html=True)
+        with c4:
+            nc = new["transactions"].sum() / new["sessions"].sum() * 100 if new["sessions"].sum() > 0 else 0
+            st.markdown(kpi_card("New Users CVR", fmt_pct(nc, 2), "Lower than returning", "warn", accent_color="#3266AD"), unsafe_allow_html=True)
+
+
+# ═══════════════════════════════════════════════════════════
+# FUNNEL
+# ═══════════════════════════════════════════════════════════
+elif active_tab == "Funnel":
+    st.markdown(section_header("Sales Funnel", "Item Views → Purchase", "#3266AD"), unsafe_allow_html=True)
+
+    with st.spinner("Loading funnel data..."):
+        df_funnel_items = load_categories(date_preset, _d_from, _d_to, source_filter)
+
+    tot_items_viewed = safe_num(df_funnel_items["items_viewed"].sum()) if not df_funnel_items.empty and "items_viewed" in df_funnel_items.columns else 0
+    tot_items_carted = safe_num(df_funnel_items["items_added_to_cart"].sum()) if not df_funnel_items.empty and "items_added_to_cart" in df_funnel_items.columns else 0
+
+    base_val = tot_items_viewed if tot_items_viewed > 0 else tot_sessions
+    base_label = "Items Viewed" if tot_items_viewed > 0 else "Sessions"
+
+    funnel_steps = [
+        (base_label, base_val, 100.0, "#3266AD"),
+        ("Add to Cart", tot_items_carted if tot_items_carted > 0 else tot_carts,
+         (tot_items_carted / base_val * 100 if base_val else 0) if tot_items_carted > 0 else (tot_carts / base_val * 100 if base_val else 0), "#378ADD"),
+        ("Checkout Start", tot_checkouts, tot_checkouts / base_val * 100 if base_val else 0, "#85B7EB"),
+        ("Purchase", tot_orders, tot_orders / base_val * 100 if base_val else 0, "#1D9E75"),
+    ]
+
+    for label, count, pct, color in funnel_steps:
+        bw = max(pct, 0.5)
+        st.markdown(f"""<div class="funnel-row"><div class="funnel-label">{label}</div>
+        <div class="funnel-track"><div class="funnel-fill" style="width:{bw}%;background:{color}">
+        {'&nbsp;' + fmt_number(count) if bw > 8 else ''}</div></div>
+        <div class="funnel-pct" style="color:{color}">{pct:.2f}%</div></div>""", unsafe_allow_html=True)
+
+    st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+
+    c1, c2, c3 = st.columns(3)
+    _cart_v = tot_items_carted if tot_items_carted > 0 else tot_carts
+    view_drop = (1 - _cart_v / base_val) * 100 if base_val else 0
+    chk_drop = (1 - tot_checkouts / _cart_v) * 100 if _cart_v else 0
+    pur_drop = (1 - tot_orders / tot_checkouts) * 100 if tot_checkouts else 0
+
+    with c1: st.markdown(kpi_card("View → Cart", fmt_pct(100 - view_drop, 1), f"⚠ {view_drop:.1f}% drop", "warn", accent_color="#EF9F27"), unsafe_allow_html=True)
+    with c2: st.markdown(kpi_card("Cart → Checkout", fmt_pct(100 - chk_drop, 1), f"⚠ {chk_drop:.1f}% abandon", "down", accent_color="#D85A30"), unsafe_allow_html=True)
+    with c3: st.markdown(kpi_card("Checkout → Buy", fmt_pct(100 - pur_drop, 1), f"⚠ {pur_drop:.1f}% drop", "down" if pur_drop > 50 else "warn", accent_color="#D85A30"), unsafe_allow_html=True)
+
+    fig = go.Figure(go.Funnel(
+        y=[base_label, "Add to Cart", "Checkout", "Purchase"],
+        x=[base_val, _cart_v, tot_checkouts, tot_orders],
+        textinfo="value+percent initial",
+        marker=dict(color=["#3266AD", "#378ADD", "#85B7EB", "#1D9E75"])))
+    fig.update_layout(**PLOT_LAYOUT, height=320)
+    st.plotly_chart(fig, use_container_width=True)
+
+    # ── Funnel by Source (Web vs App), shown when "both" selected ──
+    if source_filter == "both" and "source" in df_funnel_items.columns:
+        st.markdown(section_header("Funnel by Source", "Web vs App Comparison", "#7F77DD"), unsafe_allow_html=True)
+        for col in ["items_viewed", "items_added_to_cart", "items_purchased"]:
+            if col in df_funnel_items.columns:
+                df_funnel_items[col] = df_funnel_items[col].apply(safe_num)
+        by_src = df_funnel_items.groupby("source").sum(numeric_only=True).reset_index()
+        rows = []
+        for _, r in by_src.iterrows():
+            v = safe_num(r.get("items_viewed", 0))
+            c = safe_num(r.get("items_added_to_cart", 0))
+            p = safe_num(r.get("items_purchased", 0))
+            v2c = c / v * 100 if v > 0 else 0
+            c2p = p / c * 100 if c > 0 else 0
+            badge = source_badge(r["source"])
+            rows.append(f"<tr><td>{badge}</td><td>{fmt_number(v)}</td><td>{fmt_number(c)}</td><td>{v2c:.2f}%</td><td>{fmt_number(p)}</td><td>{c2p:.2f}%</td></tr>")
+        st.markdown(f"<table class='styled-table'><thead><tr><th>Source</th><th>Views</th><th>Carts</th><th>View→Cart</th><th>Purchases</th><th>Cart→Buy</th></tr></thead><tbody>{''.join(rows)}</tbody></table>", unsafe_allow_html=True)
+
+    if not df_nr.empty and "new_vs_returning" in df_nr.columns:
+        st.markdown(section_header("New vs Returning — Funnel Comparison", "", "#7F77DD"), unsafe_allow_html=True)
+        nr = df_nr[df_nr["new_vs_returning"].isin(["new", "returning"])].copy()
+        for col in ["sessions", "purchase_revenue", "transactions"]:
+            if col in nr.columns:
+                nr[col] = nr[col].apply(safe_num)
+        rows = []
+        for seg in ["returning", "new"]:
+            d = nr[nr["new_vs_returning"] == seg]
+            ses = d["sessions"].sum()
+            rev = d["purchase_revenue"].sum()
+            txn = d["transactions"].sum()
+            _cvr = txn / ses * 100 if ses > 0 else 0
+            _aov = rev / txn if txn > 0 else 0
+            bc = "badge-green" if seg == "returning" else "badge-blue"
+            bl = seg.title()
+            rows.append(f"<tr><td><span class='badge {bc}'>{bl}</span></td><td>{fmt_number(ses)}</td><td>{fmt_currency(rev)}</td><td>{fmt_number(txn)}</td><td><b style='color:{'#1D9E75' if seg=='returning' else '#EF9F27'}'>{fmt_pct(_cvr,2)}</b></td><td>{fmt_currency(_aov,0)}</td></tr>")
+        st.markdown(f"<table class='styled-table'><thead><tr><th>Segment</th><th>Sessions</th><th>Revenue</th><th>Orders</th><th>CVR</th><th>AOV</th></tr></thead><tbody>{''.join(rows)}</tbody></table>", unsafe_allow_html=True)
+
+
+# ═══════════════════════════════════════════════════════════
+# TRAFFIC
+# ═══════════════════════════════════════════════════════════
+elif active_tab == "Traffic":
+    st.markdown(section_header("Traffic Sources", "Sessions & Revenue by Channel", "#3266AD"), unsafe_allow_html=True)
+
+    if not df_ch.empty and "session_default_channel_group" in df_ch.columns:
+        for col in ["sessions", "purchase_revenue", "transactions", "add_to_carts"]:
+            if col in df_ch.columns:
+                df_ch[col] = df_ch[col].apply(safe_num)
+        df_g = df_ch[df_ch["session_default_channel_group"].notna() & (df_ch["session_default_channel_group"] != "")]
+        df_g = df_g.groupby("session_default_channel_group").sum(numeric_only=True).reset_index()
+        df_g = df_g[df_g["sessions"] > 10].sort_values("purchase_revenue", ascending=False)
+
+        COLORS = ["#3266AD", "#378ADD", "#85B7EB", "#1D9E75", "#5DCAA5", "#EF9F27", "#888780", "#7F77DD"]
+        col_l, col_r = st.columns(2)
+        with col_l:
+            st.markdown("**Sessions by Channel**")
+            mx = df_g["sessions"].max()
+            for i, (_, r) in enumerate(df_g.head(8).iterrows()):
+                st.markdown(bar_html(r["session_default_channel_group"], r["sessions"] / mx * 100 if mx else 0, COLORS[i % len(COLORS)], fmt_number(r["sessions"])), unsafe_allow_html=True)
+        with col_r:
+            st.markdown("**Revenue by Channel**")
+            mx = df_g["purchase_revenue"].max()
+            for i, (_, r) in enumerate(df_g.sort_values("purchase_revenue", ascending=False).head(8).iterrows()):
+                st.markdown(bar_html(r["session_default_channel_group"], r["purchase_revenue"] / mx * 100 if mx else 0, COLORS[i % len(COLORS)], fmt_currency(r["purchase_revenue"])), unsafe_allow_html=True)
+
+        st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+        st.markdown(section_header("Channel Efficiency", "CVR & Revenue per Session", "#EF9F27"), unsafe_allow_html=True)
+        rows = []
+        for _, r in df_g.iterrows():
+            ses = r["sessions"]
+            rev = r["purchase_revenue"]
+            txn = r["transactions"]
+            _cvr = txn / ses * 100 if ses > 0 else 0
+            rps = rev / ses if ses > 0 else 0
+            if _cvr >= 1.5:
+                badge = '<span class="badge badge-green">الأقوى</span>'
+            elif _cvr >= 0.8:
+                badge = '<span class="badge badge-blue">جيد</span>'
+            elif _cvr >= 0.4:
+                badge = '<span class="badge badge-amber">راجع</span>'
+            else:
+                badge = '<span class="badge badge-red">ضعيف</span>'
+            rows.append(f"<tr><td><b>{r['session_default_channel_group']}</b></td><td>{fmt_number(ses)}</td><td>{fmt_currency(rev)}</td><td>{fmt_number(txn)}</td><td><b style='color:{'#1D9E75' if _cvr>=1 else '#EF9F27' if _cvr>=0.5 else '#D85A30'}'>{fmt_pct(_cvr,2)}</b></td><td>{fmt_currency(rps,1)}</td><td>{badge}</td></tr>")
+        st.markdown(f"<table class='styled-table'><thead><tr><th>Channel</th><th>Sessions</th><th>Revenue</th><th>Orders</th><th>CVR</th><th>Rev/Session</th><th>Rating</th></tr></thead><tbody>{''.join(rows)}</tbody></table>", unsafe_allow_html=True)
+        export_csv_button(df_g[["session_default_channel_group", "sessions", "purchase_revenue", "transactions"]], "channels.csv")
+    else:
+        st.info("مفيش بيانات channels متاحة لهذا الفلتر.")
+
+    # ── Page Performance — per-page traffic from GA4 page_path ──────
+    st.markdown("<div style='height:24px'></div>", unsafe_allow_html=True)
+    st.markdown(section_header("Page Performance", "أداء كل صفحة (Sessions, Views, Bounce, Revenue)", "#7F77DD"), unsafe_allow_html=True)
+
+    if not df_pg.empty and "page_path" in df_pg.columns:
+        for col in ["sessions", "screen_page_views", "bounce_rate", "average_session_duration", "purchase_revenue", "transactions"]:
+            if col in df_pg.columns:
+                df_pg[col] = df_pg[col].apply(safe_num)
+
+        df_pg_agg = (
+            df_pg[df_pg["page_path"].notna() & (df_pg["page_path"] != "")]
+            .groupby("page_path", as_index=False)
+            .sum(numeric_only=True)
+        )
+        df_pg_agg = df_pg_agg[df_pg_agg["sessions"] > 0].sort_values("sessions", ascending=False)
+
+        search_term = st.text_input(
+            "🔍 دور على صفحة معينة (اكتب جزء من الرابط — مثلاً zanussi أو category)",
+            key="page_search",
+        )
+        df_pg_view = df_pg_agg
+        if search_term.strip():
+            df_pg_view = df_pg_agg[df_pg_agg["page_path"].str.contains(search_term.strip(), case=False, na=False)]
+
+        if not df_pg_view.empty:
+            top_n_pages = st.slider("عدد الصفحات المعروضة", 5, 100, 25, key="page_topn")
+            df_pg_show = df_pg_view.head(top_n_pages)
+
+            tot_pg_sessions = df_pg_show["sessions"].sum()
+            tot_pg_views = df_pg_show["screen_page_views"].sum() if "screen_page_views" in df_pg_show.columns else 0
+            avg_bounce_pg = df_pg_show["bounce_rate"].mean() * 100 if "bounce_rate" in df_pg_show.columns else 0
+
+            c1, c2, c3 = st.columns(3)
+            with c1: st.markdown(kpi_card("Total Sessions (شاشة)", fmt_number(tot_pg_sessions), "للصفحات المعروضة", "neu", accent_color="#7F77DD"), unsafe_allow_html=True)
+            with c2: st.markdown(kpi_card("Total Page Views", fmt_number(tot_pg_views), "للصفحات المعروضة", "neu", accent_color="#3266AD"), unsafe_allow_html=True)
+            with c3: st.markdown(kpi_card("Avg Bounce Rate", fmt_pct(avg_bounce_pg), "متوسط الصفحات المعروضة", "warn" if avg_bounce_pg > 50 else "up", accent_color="#D85A30" if avg_bounce_pg > 50 else "#1D9E75"), unsafe_allow_html=True)
+
+            st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+
+            rows_pg = []
+            for _, r in df_pg_show.iterrows():
+                path = str(r["page_path"])
+                disp_path = path if len(path) <= 55 else path[:52] + "..."
+                br = safe_num(r.get("bounce_rate", 0)) * 100
+                dur = safe_num(r.get("average_session_duration", 0))
+                dur_m, dur_s = int(dur // 60), int(dur % 60)
+                rev = safe_num(r.get("purchase_revenue", 0))
+                br_color = "#1D9E75" if br < 40 else "#EF9F27" if br < 60 else "#D85A30"
+                rows_pg.append(
+                    f"<tr><td style='font-size:12px' title='{path}'>{disp_path}</td>"
+                    f"<td>{fmt_number(r['sessions'])}</td>"
+                    f"<td>{fmt_number(r.get('screen_page_views', 0))}</td>"
+                    f"<td><b style='color:{br_color}'>{br:.1f}%</b></td>"
+                    f"<td>{dur_m}:{dur_s:02d}</td>"
+                    f"<td>{fmt_currency(rev) if rev > 0 else '—'}</td></tr>"
+                )
+            st.markdown(
+                "<table class='styled-table'><thead><tr><th>Page Path</th><th>Sessions</th>"
+                "<th>Views</th><th>Bounce Rate</th><th>Avg Time</th><th>Revenue</th></tr></thead>"
+                f"<tbody>{''.join(rows_pg)}</tbody></table>",
+                unsafe_allow_html=True,
+            )
+            export_csv_button(df_pg_show, "page_performance.csv")
+
+            # Quick visual: top 10 pages by sessions
+            st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+            st.markdown("**Top 10 Pages by Sessions**")
+            mx_pg = df_pg_show["sessions"].max()
+            PG_COLORS = ["#3266AD", "#378ADD", "#85B7EB", "#1D9E75", "#5DCAA5", "#EF9F27", "#7F77DD", "#D85A30", "#888780", "#B5D4F4"]
+            for i, (_, r) in enumerate(df_pg_show.head(10).iterrows()):
+                path = str(r["page_path"])
+                disp_path = path if len(path) <= 35 else path[:32] + "..."
+                st.markdown(
+                    bar_html(disp_path, r["sessions"] / mx_pg * 100 if mx_pg else 0, PG_COLORS[i % len(PG_COLORS)], fmt_number(r["sessions"])),
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.info(f"مفيش صفحات مطابقة لـ '{search_term}'.")
+    else:
+        st.info("مفيش بيانات page-level متاحة — تأكد إن GA4 بترصد page_path/screen_page_views.")
+
+
+# ═══════════════════════════════════════════════════════════
+# DEVICES
+# ═══════════════════════════════════════════════════════════
+elif active_tab == "Devices":
+    st.markdown(section_header("Device Performance", "Mobile vs Desktop vs Tablet", "#7F77DD"), unsafe_allow_html=True)
+
+    if not df_dv.empty and "devicecategory" in df_dv.columns:
+        for col in ["sessions", "purchase_revenue", "transactions", "bounce_rate"]:
+            if col in df_dv.columns:
+                df_dv[col] = df_dv[col].apply(safe_num)
+        DC = {"mobile": "#3266AD", "desktop": "#888780", "tablet": "#1D9E75"}
+        md = df_dv[df_dv["devicecategory"].isin(["mobile", "desktop", "tablet"])]
+        md = md.groupby("devicecategory").sum(numeric_only=True).reset_index()
+
+        cols = st.columns(len(md)) if len(md) else [st.container()]
+        for i, (_, r) in enumerate(md.iterrows()):
+            dev = r["devicecategory"]
+            c = DC.get(dev, "#888780")
+            br = r["bounce_rate"] * 100
+            sp = r["sessions"] / md["sessions"].sum() * 100 if md["sessions"].sum() > 0 else 0
+            with cols[i]:
+                st.markdown(kpi_card(dev.title(), f"{sp:.1f}%", f"Bounce: {br:.1f}%", "down" if br > 55 else "warn" if br > 45 else "up", f"Sessions: {fmt_number(r['sessions'])} · Rev: {fmt_currency(r['purchase_revenue'])}", accent_color=c), unsafe_allow_html=True)
+
+        st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+        col_l, col_r = st.columns(2)
+        with col_l:
+            st.markdown(section_header("Revenue Split", "", "#1D9E75"), unsafe_allow_html=True)
+            fig = go.Figure(go.Pie(labels=md["devicecategory"].str.title(), values=md["purchase_revenue"], marker_colors=[DC.get(d, "#888780") for d in md["devicecategory"]], hole=0.6, textinfo="label+percent", textfont_size=11))
+            fig.update_layout(**PLOT_LAYOUT, height=260)
+            st.plotly_chart(fig, use_container_width=True)
+        with col_r:
+            st.markdown(section_header("Bounce Rate by Device", "", "#D85A30"), unsafe_allow_html=True)
+            fig2 = go.Figure(go.Bar(x=md["devicecategory"].str.title(), y=md["bounce_rate"] * 100, marker_color=[DC.get(d, "#888780") for d in md["devicecategory"]], text=[f"{r*100:.1f}%" for r in md["bounce_rate"]], textposition="outside"))
+            fig2.update_layout(**PLOT_LAYOUT, height=260, yaxis=dict(ticksuffix="%", range=[0, 80], gridcolor="#E8EDF2"))
+            st.plotly_chart(fig2, use_container_width=True)
+    else:
+        st.info("مفيش بيانات devices متاحة لهذا الفلتر.")
+
+
+# ═══════════════════════════════════════════════════════════
+# E-COMMERCE
+# ═══════════════════════════════════════════════════════════
+elif active_tab == "E-Commerce":
+    st.markdown(section_header("E-Commerce Insights", "Products & Categories", "#1D9E75"), unsafe_allow_html=True)
+
+    with st.spinner("Loading e-commerce data..."):
+        df_cat = load_categories(date_preset, _d_from, _d_to, source_filter)
+        df_prod = load_products(date_preset, _d_from, _d_to, source_filter)
+        df_sub = load_subcategory(date_preset, _d_from, _d_to, source_filter)
+
+    RANEEN_CATS = ["الأجهزة المنزلية", "الأثاث", "الإلكترونيات", "المطبخ", "موبايلات", "المفروشات", "عروض رنين", "المنزل", "المنتجات العائلية", "الأزياء و الموضة"]
+    CAT_ICONS = {"الأجهزة المنزلية": "🏠", "الأثاث": "🛋️", "الإلكترونيات": "📺", "المطبخ": "🍳", "موبايلات": "📱", "المفروشات": "🛏️", "عروض رنين": "🏷️", "المنزل": "🪴", "المنتجات العائلية": "👨‍👩‍👧", "الأزياء و الموضة": "👗"}
+    CAT_COLORS = ["#3266AD", "#378ADD", "#85B7EB", "#1D9E75", "#5DCAA5", "#EF9F27", "#7F77DD", "#D85A30", "#888780", "#B5D4F4"]
+
+    # ── DEBUG: verify web/app split is actually returning different data ──
+    with st.expander("🔍 Debug — Data source breakdown (تأكد إن الـ App بترجع بيانات)"):
+        if "source" in df_cat.columns:
+            src_counts = df_cat["source"].value_counts()
+            st.write("Rows per source:", src_counts.to_dict())
+            if "gross_item_revenue" in df_cat.columns:
+                rev_by_src = df_cat.copy()
+                rev_by_src["gross_item_revenue"] = rev_by_src["gross_item_revenue"].apply(safe_num)
+                st.write("Revenue per source:", rev_by_src.groupby("source")["gross_item_revenue"].sum().to_dict())
+
+            app_rows = df_cat[df_cat["source"] == "app"]
+            if not app_rows.empty:
+                st.markdown("**🎯 App row(s) — exact item_category value:**")
+                for _, r in app_rows.iterrows():
+                    st.code(f"item_category = {r.get('item_category')!r}")
+                st.dataframe(app_rows)
+            st.markdown("**RANEEN_CATS list used for filtering:**")
+            st.code(str(RANEEN_CATS))
+            st.dataframe(df_cat.head(20))
+        else:
+            st.warning("⚠️ No 'source' column found in df_cat — the data wasn't tagged by source at all.")
+            st.write(f"Current filter: **{source_filter}**")
+            st.write(f"Rows returned: {len(df_cat)}")
+            st.dataframe(df_cat.head(20))
+
+    if not df_cat.empty and "item_category" in df_cat.columns:
+        for col in ["gross_item_revenue", "items_purchased", "items_viewed", "items_added_to_cart"]:
+            if col in df_cat.columns:
+                df_cat[col] = df_cat[col].apply(safe_num)
+        df_cat_agg = df_cat.groupby("item_category").sum(numeric_only=True).reset_index()
+
+        known = df_cat_agg[df_cat_agg["item_category"].isin(RANEEN_CATS)].copy()
+        unknown = df_cat_agg[~df_cat_agg["item_category"].isin(RANEEN_CATS)].copy()
+
+        # If there's meaningful revenue in unmatched categories (e.g. App returns
+        # "(not set)" or different category names), surface it instead of silently
+        # dropping it — fold it into a single "App / Other" bucket.
+        unknown_rev = safe_num(unknown["gross_item_revenue"].sum()) if not unknown.empty else 0
+        if unknown_rev > 0:
+            other_row = pd.DataFrame([{
+                "item_category": "App / Other (غير مصنف)",
+                "gross_item_revenue": unknown["gross_item_revenue"].sum(),
+                "items_purchased": unknown["items_purchased"].sum() if "items_purchased" in unknown.columns else 0,
+                "items_viewed": unknown["items_viewed"].sum() if "items_viewed" in unknown.columns else 0,
+                "items_added_to_cart": unknown["items_added_to_cart"].sum() if "items_added_to_cart" in unknown.columns else 0,
+            }])
+            df_cf = pd.concat([known, other_row], ignore_index=True).sort_values("gross_item_revenue", ascending=False)
+            st.info(f"ℹ️ {fmt_currency(unknown_rev)} من الـ revenue جاية من categories مش متطابقة مع القايمة المعروفة (غالباً App) — مجمّعة في 'App / Other' تحت.")
+        else:
+            df_cf = known.sort_values("gross_item_revenue", ascending=False)
+
+        tir = df_cf["gross_item_revenue"].sum()
+        tiu = df_cf["items_purchased"].sum()
+
+        c1, c2, c3 = st.columns(3)
+        with c1: st.markdown(kpi_card("Item Revenue", fmt_currency(tir), "All categories", "up", accent_color="#1D9E75"), unsafe_allow_html=True)
+        with c2: st.markdown(kpi_card("Units Sold", fmt_number(tiu), "Total items purchased", "up", accent_color="#3266AD"), unsafe_allow_html=True)
+        with c3: st.markdown(kpi_card("Avg Unit Price", fmt_currency(tir / tiu, 0) if tiu else "—", "Revenue / Units", "neu", accent_color="#7F77DD"), unsafe_allow_html=True)
+
+        st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+        col_l, col_m, col_r = st.columns(3)
+        with col_l:
+            st.markdown(section_header("Revenue by Category", "", "#1D9E75"), unsafe_allow_html=True)
+            mx = df_cf["gross_item_revenue"].max()
+            for i, (_, r) in enumerate(df_cf.head(10).iterrows()):
+                st.markdown(bar_html(f"{CAT_ICONS.get(r['item_category'],'')} {r['item_category']}", r["gross_item_revenue"] / mx * 100 if mx else 0, CAT_COLORS[i % len(CAT_COLORS)], fmt_currency(r["gross_item_revenue"])), unsafe_allow_html=True)
+        with col_m:
+            st.markdown(section_header("Views by Category", "", "#3266AD"), unsafe_allow_html=True)
+            df_views = df_cf.sort_values("items_viewed", ascending=False)
+            mx = df_views["items_viewed"].max()
+            for i, (_, r) in enumerate(df_views.head(10).iterrows()):
+                st.markdown(bar_html(f"{CAT_ICONS.get(r['item_category'],'')} {r['item_category']}", r["items_viewed"] / mx * 100 if mx else 0, CAT_COLORS[i % len(CAT_COLORS)], fmt_number(r["items_viewed"])), unsafe_allow_html=True)
+        with col_r:
+            st.markdown(section_header("Cart-to-View Rate", "", "#EF9F27"), unsafe_allow_html=True)
+            df_cf = df_cf.copy()
+            df_cf["cr"] = df_cf.apply(lambda r: r["items_added_to_cart"] / r["items_viewed"] * 100 if r["items_viewed"] > 0 else 0, axis=1)
+            mx = df_cf["cr"].max()
+            for _, r in df_cf.sort_values("cr", ascending=False).head(10).iterrows():
+                c = "#1D9E75" if r["cr"] > 6 else "#EF9F27" if r["cr"] > 3 else "#D85A30"
+                st.markdown(bar_html(f"{CAT_ICONS.get(r['item_category'],'')} {r['item_category']}", r["cr"] / mx * 100 if mx else 0, c, f"{r['cr']:.1f}%"), unsafe_allow_html=True)
+
+        st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+        st.markdown(section_header("Category Drill-Down", "إيه بيباع جوه كل فئة؟", "#7F77DD"), unsafe_allow_html=True)
+        sel_cat = st.selectbox("اختار الفئة", RANEEN_CATS, key="cat_dd")
+
+        if not df_sub.empty and "item_category2" in df_sub.columns:
+            for col in ["gross_item_revenue", "items_purchased", "items_viewed", "items_added_to_cart"]:
+                if col in df_sub.columns:
+                    df_sub[col] = df_sub[col].apply(safe_num)
+            dsf = df_sub[(df_sub["item_category"] == sel_cat) & df_sub["item_category2"].notna() & (df_sub["item_category2"] != "") & (df_sub["item_category2"] != "(not set)")]
+            dsf = dsf.groupby("item_category2").sum(numeric_only=True).reset_index()
+            dsf = dsf[dsf["gross_item_revenue"] > 0].sort_values("gross_item_revenue", ascending=False)
+
+            if not dsf.empty:
+                SC = ["#3266AD", "#1D9E75", "#EF9F27", "#7F77DD", "#D85A30", "#5DCAA5", "#85B7EB", "#888780"]
+                col_l2, col_r2 = st.columns(2)
+                mx = dsf["gross_item_revenue"].max()
+                with col_l2:
+                    st.markdown(f"**Revenue — {sel_cat}**")
+                    for i, (_, r) in enumerate(dsf.head(10).iterrows()):
+                        st.markdown(bar_html(str(r["item_category2"]), r["gross_item_revenue"] / mx * 100 if mx else 0, SC[i % len(SC)], fmt_currency(r["gross_item_revenue"])), unsafe_allow_html=True)
+                with col_r2:
+                    st.markdown(f"**Units — {sel_cat}**")
+                    du = dsf.sort_values("items_purchased", ascending=False)
+                    mu = du["items_purchased"].max()
+                    for i, (_, r) in enumerate(du.head(10).iterrows()):
+                        st.markdown(bar_html(str(r["item_category2"]), r["items_purchased"] / mu * 100 if mu else 0, SC[i % len(SC)], fmt_number(r["items_purchased"]) + " unit"), unsafe_allow_html=True)
+            else:
+                st.info(f"مفيش sub-category data لـ '{sel_cat}'")
+
+        if not df_prod.empty and "item_name" in df_prod.columns:
+            for col in ["item_revenue", "items_purchased", "items_viewed", "items_added_to_cart"]:
+                if col in df_prod.columns:
+                    df_prod[col] = df_prod[col].apply(safe_num)
+            df_prod_agg = df_prod.groupby("item_name").sum(numeric_only=True).reset_index()
+            df_top = df_prod_agg[df_prod_agg["item_revenue"] > 0].sort_values("item_revenue", ascending=False).head(15)
+
+            st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+            st.markdown(section_header("Top 15 Products by Revenue", "", "#3266AD"), unsafe_allow_html=True)
+            rows = []
+            for i, (_, r) in enumerate(df_top.iterrows(), 1):
+                nm = str(r["item_name"])[:55] + ("..." if len(str(r["item_name"])) > 55 else "")
+                vw = safe_num(r.get("items_viewed", 0))
+                cr_ = safe_num(r.get("items_added_to_cart", 0)) / vw * 100 if vw > 0 else 0
+                bc = "badge-green" if cr_ > 8 else "badge-amber" if cr_ > 4 else "badge-red"
+                rows.append(f"<tr><td style='color:#9A9A8E'>{i}</td><td>{nm}</td><td><b style='color:#1D9E75'>{fmt_currency(r['item_revenue'])}</b></td><td>{int(r['items_purchased'])}</td><td>{fmt_number(vw)}</td><td><span class='badge {bc}'>{cr_:.1f}%</span></td></tr>")
+            st.markdown(f"<table class='styled-table'><thead><tr><th>#</th><th>Product</th><th>Revenue</th><th>Units</th><th>Views</th><th>Cart%</th></tr></thead><tbody>{''.join(rows)}</tbody></table>", unsafe_allow_html=True)
+            export_csv_button(df_top[["item_name", "item_revenue", "items_purchased", "items_viewed", "items_added_to_cart"]], "top_products.csv")
+    else:
+        st.info("مفيش بيانات e-commerce متاحة لهذا الفلتر.")
+
+
+# ═══════════════════════════════════════════════════════════
+# CAMPAIGNS
+# ═══════════════════════════════════════════════════════════
+elif active_tab == "Campaigns":
+    st.markdown(section_header("Campaigns Performance", "Google Ads Analysis", "#3266AD"), unsafe_allow_html=True)
+
+    if not df_cp.empty and "session_google_ads_campaign_name" in df_cp.columns:
+        for col in ["sessions", "purchase_revenue", "transactions", "add_to_carts", "checkouts"]:
+            if col in df_cp.columns:
+                df_cp[col] = df_cp[col].apply(safe_num)
+        df_cp_agg = df_cp.groupby("session_google_ads_campaign_name").sum(numeric_only=True).reset_index()
+        df_p = df_cp_agg[df_cp_agg["session_google_ads_campaign_name"].notna() & (df_cp_agg["session_google_ads_campaign_name"] != "(not set)") & (df_cp_agg["sessions"] > 100)].copy()
+        df_p["cvr"] = df_p.apply(lambda r: r["transactions"] / r["sessions"] * 100 if r["sessions"] > 0 else 0, axis=1)
+        df_p["rps"] = df_p.apply(lambda r: r["purchase_revenue"] / r["sessions"] if r["sessions"] > 0 else 0, axis=1)
+        df_p = df_p.sort_values("purchase_revenue", ascending=False)
+
+        if not df_p.empty:
+            best = df_p.loc[df_p["purchase_revenue"].idxmax()]
+            worst = df_p.loc[df_p["cvr"].idxmin()]
+            bcvr = df_p.loc[df_p["cvr"].idxmax()]
+
+            c1, c2, c3, c4 = st.columns(4)
+            with c1: st.markdown(kpi_card("Best Campaign", best["session_google_ads_campaign_name"].split("-")[-1], fmt_currency(best["purchase_revenue"]), "up", accent_color="#3266AD"), unsafe_allow_html=True)
+            with c2: st.markdown(kpi_card("Highest CVR", bcvr["session_google_ads_campaign_name"].split("-")[-1], fmt_pct(bcvr["cvr"], 2), "up", accent_color="#1D9E75"), unsafe_allow_html=True)
+            with c3: st.markdown(kpi_card("Total Paid Sessions", fmt_number(df_p["sessions"].sum()), "Google Ads campaigns", "neu", accent_color="#7F77DD"), unsafe_allow_html=True)
+            with c4: st.markdown(kpi_card("Worst CVR", worst["session_google_ads_campaign_name"].split("-")[-1], fmt_pct(worst["cvr"], 2), "down", accent_color="#D85A30"), unsafe_allow_html=True)
+
+            st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+            col_l, col_r = st.columns(2)
+            with col_l:
+                st.markdown(section_header("Revenue per Session", "Campaign Efficiency", "#EF9F27"), unsafe_allow_html=True)
+                dr = df_p.sort_values("rps", ascending=False).head(10)
+                mx = dr["rps"].max()
+                for _, r in dr.iterrows():
+                    p = r["rps"] / mx * 100 if mx else 0
+                    c = "#1D9E75" if p > 70 else "#EF9F27" if p > 30 else "#D85A30"
+                    st.markdown(bar_html(str(r["session_google_ads_campaign_name"])[-28:], p, c, fmt_currency(r["rps"], 1)), unsafe_allow_html=True)
+            with col_r:
+                st.markdown(section_header("Sessions vs Revenue", "Bubble View", "#3266AD"), unsafe_allow_html=True)
+                fig = px.scatter(df_p.head(12), x="sessions", y="purchase_revenue", size="transactions", color="cvr", hover_name="session_google_ads_campaign_name", color_continuous_scale=["#D85A30", "#EF9F27", "#1D9E75"], size_max=40)
+                fig.update_layout(**PLOT_LAYOUT, height=280)
+                st.plotly_chart(fig, use_container_width=True)
+
+            st.markdown(section_header("All Campaigns — Full Analysis", "", "#2A3050"), unsafe_allow_html=True)
+            rows = []
+            for _, r in df_p.iterrows():
+                cv = r["cvr"]
+                if cv >= 1.5:
+                    badge = '<span class="badge badge-green">الأقوى</span>'
+                elif cv >= 0.8:
+                    badge = '<span class="badge badge-blue">جيد</span>'
+                elif cv >= 0.3:
+                    badge = '<span class="badge badge-amber">راجع</span>'
+                else:
+                    badge = '<span class="badge badge-red">ضعيف</span>'
+                rows.append(f"<tr><td style='font-size:11px'>{r['session_google_ads_campaign_name']}</td><td>{fmt_number(r['sessions'])}</td><td><b style='color:#1D9E75'>{fmt_currency(r['purchase_revenue'])}</b></td><td>{int(r['transactions'])}</td><td><b style='color:{'#1D9E75' if cv>=1 else '#EF9F27' if cv>=0.5 else '#D85A30'}'>{fmt_pct(cv,2)}</b></td><td>{fmt_currency(r['rps'],1)}</td><td>{badge}</td></tr>")
+            st.markdown(f"<table class='styled-table'><thead><tr><th>Campaign</th><th>Sessions</th><th>Revenue</th><th>Orders</th><th>CVR</th><th>Rev/Ses</th><th>Rating</th></tr></thead><tbody>{''.join(rows)}</tbody></table>", unsafe_allow_html=True)
+        else:
+            st.info("مفيش بيانات campaigns كفاية (محتاج أكتر من 100 session).")
+    else:
+        st.info("مفيش بيانات campaigns متاحة لهذا الفلتر.")
+
+    # ── META CAMPAIGNS ───────────────────────────────────────
+    st.markdown("<div style='height:24px'></div>", unsafe_allow_html=True)
+    st.markdown(section_header("Meta Campaigns", "أداء كامبينز Facebook & Instagram في GA4", "#1877F2"), unsafe_allow_html=True)
+    st.caption("البيانات من GA4 عن طريق UTM parameters — session_manual_campaign_name")
+
+    with st.spinner("Loading Meta campaigns..."):
+        df_meta = load_meta_campaigns(date_preset, _d_from, _d_to, source_filter)
+
+    with st.expander("🔍 Debug — هل دي Web + App ولا Web بس؟"):
+        if "source" in df_meta.columns:
+            st.write("Rows per source:", df_meta["source"].value_counts().to_dict())
+            if "sessions" in df_meta.columns:
+                tmp = df_meta.copy()
+                tmp["sessions"] = tmp["sessions"].apply(safe_num)
+                st.write("Sessions per source:", tmp.groupby("source")["sessions"].sum().to_dict())
+        else:
+            st.warning("⚠️ مفيش عمود source — البيانات مش متفلترة بـ source.")
+        st.dataframe(df_meta.head(10))
+
+    if not df_meta.empty and "session_manual_campaign_name" in df_meta.columns:
+        for col in ["sessions", "purchase_revenue", "transactions", "add_to_carts"]:
+            if col in df_meta.columns:
+                df_meta[col] = df_meta[col].apply(safe_num)
+        df_meta_agg = df_meta.groupby("session_manual_campaign_name").sum(numeric_only=True).reset_index()
+
+        exclude = ["(organic)", "(not set)", "(referral)", "(direct)"]
+        df_meta_f = df_meta_agg[
+            ~df_meta_agg["session_manual_campaign_name"].isin(exclude) &
+            df_meta_agg["session_manual_campaign_name"].notna() &
+            (df_meta_agg["sessions"] > 5)
+        ].copy()
+
+        if not df_meta_f.empty:
+            df_meta_f["cvr"] = df_meta_f.apply(lambda r: r["transactions"] / r["sessions"] * 100 if r["sessions"] > 0 else 0, axis=1)
+            df_meta_f["rps"] = df_meta_f.apply(lambda r: r["purchase_revenue"] / r["sessions"] if r["sessions"] > 0 else 0, axis=1)
+            df_meta_f["aov"] = df_meta_f.apply(lambda r: r["purchase_revenue"] / r["transactions"] if r["transactions"] > 0 else 0, axis=1)
+            df_meta_f = df_meta_f.sort_values("purchase_revenue", ascending=False)
+
+            tot_meta_rev = df_meta_f["purchase_revenue"].sum()
+            tot_meta_ses = df_meta_f["sessions"].sum()
+            tot_meta_ord = df_meta_f["transactions"].sum()
+            meta_cvr = tot_meta_ord / tot_meta_ses * 100 if tot_meta_ses > 0 else 0
+            meta_aov = tot_meta_rev / tot_meta_ord if tot_meta_ord > 0 else 0
+
+            mk1, mk2, mk3, mk4 = st.columns(4)
+            with mk1: st.markdown(kpi_card("Meta Revenue", fmt_currency(tot_meta_rev), "via UTM campaigns", "up", accent_color="#1877F2"), unsafe_allow_html=True)
+            with mk2: st.markdown(kpi_card("Meta Sessions", fmt_number(tot_meta_ses), "من كل الكامبينز", "neu", accent_color="#1877F2"), unsafe_allow_html=True)
+            with mk3: st.markdown(kpi_card("Meta Orders", fmt_number(tot_meta_ord), f"CVR: {fmt_pct(meta_cvr,2)}", "up" if meta_cvr > 0.5 else "warn", accent_color="#1877F2"), unsafe_allow_html=True)
+            with mk4: st.markdown(kpi_card("Meta AOV", fmt_currency(meta_aov, 0), "متوسط قيمة الطلب", "neu", accent_color="#1877F2"), unsafe_allow_html=True)
+
+            st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+            rows = []
+            for _, r in df_meta_f.head(20).iterrows():
+                cv = r["cvr"]
+                badge = '<span class="badge badge-green">الأقوى</span>' if cv >= 1 else ('<span class="badge badge-amber">راجع</span>' if cv >= 0.4 else '<span class="badge badge-red">ضعيف</span>')
+                rows.append(f"<tr><td style='font-size:11px'>{r['session_manual_campaign_name']}</td><td>{fmt_number(r['sessions'])}</td><td><b style='color:#1877F2'>{fmt_currency(r['purchase_revenue'])}</b></td><td>{int(r['transactions'])}</td><td>{fmt_pct(cv,2)}</td><td>{fmt_currency(r['aov'],0)}</td><td>{badge}</td></tr>")
+            st.markdown(f"<table class='styled-table'><thead><tr><th>Campaign</th><th>Sessions</th><th>Revenue</th><th>Orders</th><th>CVR</th><th>AOV</th><th>Rating</th></tr></thead><tbody>{''.join(rows)}</tbody></table>", unsafe_allow_html=True)
+
+            # ── Products sold per campaign — drill-down table ──────────────
+            st.markdown("<div style='height:24px'></div>", unsafe_allow_html=True)
+            st.markdown(section_header("Products by Campaign", "إيه اللي باع من كل كامبين؟", "#1877F2"), unsafe_allow_html=True)
+
+            # Source selector: Meta or Google Ads
+            prod_source = st.radio(
+                "مصدر الكامبين",
+                ["Meta (Facebook/Instagram)", "Google Ads"],
+                horizontal=True,
+                key="prod_campaign_source"
+            )
+
+            if prod_source == "Meta (Facebook/Instagram)":
+                campaign_options = df_meta_f["session_manual_campaign_name"].tolist()
+                sel_campaign = st.selectbox("اختار الكامبين", campaign_options, key="meta_campaign_dd")
+                with st.spinner("Loading products..."):
+                    df_camp_prod = load_meta_campaign_products(date_preset, _d_from, _d_to, source_filter)
+                camp_col = "session_manual_campaign_name"
+                accent = "#1877F2"
+            else:
+                # Google Ads campaigns
+                with st.spinner("Loading Google Ads campaigns..."):
+                    df_gads = load_campaigns(date_preset, _d_from, _d_to, source_filter)
+                if not df_gads.empty and "session_google_ads_campaign_name" in df_gads.columns:
+                    gads_camps = df_gads[
+                        df_gads["session_google_ads_campaign_name"].notna() &
+                        (df_gads["session_google_ads_campaign_name"] != "(not set)")
+                    ]["session_google_ads_campaign_name"].unique().tolist()
+                    sel_campaign = st.selectbox("اختار الكامبين", gads_camps, key="gads_campaign_dd")
+                    with st.spinner("Loading products..."):
+                        df_camp_prod = load_campaign_products(date_preset, _d_from, _d_to, source_filter)
+                    camp_col = "session_google_ads_campaign_name"
+                    accent = "#4285F4"
+                else:
+                    st.info("مفيش بيانات Google Ads campaigns متاحة.")
+                    df_camp_prod = pd.DataFrame()
+                    camp_col = "session_google_ads_campaign_name"
+                    sel_campaign = ""
+                    accent = "#4285F4"
+
+            if not df_camp_prod.empty and camp_col in df_camp_prod.columns:
+                for col in ["item_revenue", "items_purchased"]:
+                    if col in df_camp_prod.columns:
+                        df_camp_prod[col] = df_camp_prod[col].apply(safe_num)
+
+                dcp = df_camp_prod[df_camp_prod[camp_col] == sel_campaign].copy()
+
+                group_cols = ["item_name"]
+                if "item_id" in dcp.columns:
+                    group_cols.append("item_id")
+
+                agg_dict = {"item_revenue": "sum", "items_purchased": "sum"}
+                dcp_agg = dcp.groupby(group_cols, as_index=False).agg(agg_dict)
+                dcp_agg = dcp_agg[dcp_agg["item_revenue"] > 0].sort_values("item_revenue", ascending=False)
+
+                # Calculate unit price from revenue ÷ units (more reliable than item_price field)
+                dcp_agg["avg_price"] = dcp_agg.apply(
+                    lambda r: r["item_revenue"] / r["items_purchased"] if r["items_purchased"] > 0 else 0,
+                    axis=1
+                )
+
+                if not dcp_agg.empty:
+                    tot_camp_rev = dcp_agg["item_revenue"].sum()
+                    tot_camp_units = dcp_agg["items_purchased"].sum()
+
+                    pc1, pc2, pc3 = st.columns(3)
+                    with pc1: st.markdown(kpi_card("Campaign Product Revenue", fmt_currency(tot_camp_rev), sel_campaign[:30], "up", accent_color=accent), unsafe_allow_html=True)
+                    with pc2: st.markdown(kpi_card("Units Sold", fmt_number(tot_camp_units), "من هذا الكامبين", "neu", accent_color="#3266AD"), unsafe_allow_html=True)
+                    with pc3: st.markdown(kpi_card("Products Count", str(len(dcp_agg)), "منتج مختلف باع", "neu", accent_color="#7F77DD"), unsafe_allow_html=True)
+
+                    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+
+                    rows_p = []
+                    for _, r in dcp_agg.head(30).iterrows():
+                        nm = str(r["item_name"])[:50] + ("..." if len(str(r["item_name"])) > 50 else "")
+                        sku_html = f"<td style='font-size:11px;color:#73726C'>{r['item_id']}</td>" if "item_id" in dcp_agg.columns else ""
+                        rows_p.append(
+                            f"<tr><td>{nm}</td>{sku_html}"
+                            f"<td><b style='color:{accent}'>{fmt_currency(r['item_revenue'])}</b></td>"
+                            f"<td>{int(r['items_purchased'])}</td>"
+                            f"<td>{fmt_currency(r['avg_price'], 0)}</td></tr>"
+                        )
+                    sku_th = "<th>SKU / ID</th>" if "item_id" in dcp_agg.columns else ""
+                    st.markdown(
+                        f"<table class='styled-table'><thead><tr><th>المنتج</th>{sku_th}<th>Revenue</th><th>الكمية</th><th>متوسط السعر</th></tr></thead>"
+                        f"<tbody>{''.join(rows_p)}</tbody></table>",
+                        unsafe_allow_html=True,
+                    )
+                    export_csv_button(dcp_agg, f"products_{sel_campaign[:20]}.csv", "📥 Export Products CSV")
+                else:
+                    st.info(f"مفيش منتجات باعت من كامبين '{sel_campaign}' في الفترة دي.")
+            else:
+                st.info("مفيش بيانات منتجات متاحة على مستوى الكامبين — تأكد إن item-level UTM tracking مفعّل.")
+        else:
+            st.info("مفيش بيانات Meta campaigns كفاية حالياً.")
+    else:
+        st.info("مفيش بيانات Meta campaigns متاحة — تأكد إن UTM parameters متظبطة صح.")
