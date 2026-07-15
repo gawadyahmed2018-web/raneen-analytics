@@ -13,6 +13,33 @@ WINDSOR_KEY = "d9457cee421e35fb6dd6f37728604a86b321"
 WINDSOR_BASE = "https://connectors.windsor.ai/google_ads"
 
 
+def preset_to_range(preset):
+    """Return (date_from, date_to) for a preset."""
+    today = date.today()
+    mapping = {
+        "last_7d": (today - timedelta(days=7), today - timedelta(days=1)),
+        "last_14d": (today - timedelta(days=14), today - timedelta(days=1)),
+        "last_30d": (today - timedelta(days=30), today - timedelta(days=1)),
+        "last_90d": (today - timedelta(days=90), today - timedelta(days=1)),
+        "this_month": (today.replace(day=1), today - timedelta(days=1)),
+        "last_month": (
+            (today.replace(day=1) - timedelta(days=1)).replace(day=1),
+            today.replace(day=1) - timedelta(days=1),
+        ),
+    }
+    return mapping.get(preset, (today - timedelta(days=30), today - timedelta(days=1)))
+
+
+def previous_period(date_from, date_to):
+    """Given a date range, return the immediately preceding range of equal length."""
+    d_from = pd.to_datetime(date_from).date()
+    d_to = pd.to_datetime(date_to).date()
+    length = (d_to - d_from).days + 1
+    prev_to = d_from - timedelta(days=1)
+    prev_from = prev_to - timedelta(days=length - 1)
+    return str(prev_from), str(prev_to)
+
+
 def get_google_ads_data(fields, date_preset="last_30d", date_from=None, date_to=None, timeout=60):
     """Fetch data from the Google Ads connector. Returns empty DataFrame on failure."""
     params = {
