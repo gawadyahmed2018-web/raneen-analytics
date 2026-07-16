@@ -65,6 +65,10 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+# Prominent link to the Executive Summary (profitability overview)
+st.page_link("pages/0_🎯_Executive_Summary.py", label="🎯 افتح الملخص التنفيذي — الربحية والأداء مقابل التارجت", icon="📊")
+st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+
 
 # ── Data loaders (summary level only) ────────────────────
 @st.cache_data(ttl=300, show_spinner=False)
