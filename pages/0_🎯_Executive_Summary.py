@@ -38,7 +38,8 @@ st.markdown(f"""
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap');
 
 html, body, [class*="css"] {{ font-family: 'Inter','IBM Plex Sans Arabic', sans-serif; }}
-#MainMenu, footer, header {{ visibility: hidden; }}
+#MainMenu, footer {{ visibility: hidden; }}
+[data-testid="stHeader"] {{ background:rgba(0,0,0,0); }}
 .block-container {{ padding: 1rem 1.6rem 3rem; max-width: 1600px; }}
 .stApp {{ background: {C['bg']}; }}
 [data-testid="stSidebarCollapsedControl"] {{ display: block; }}
