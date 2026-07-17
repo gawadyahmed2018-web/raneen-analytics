@@ -16,7 +16,7 @@ import plotly.graph_objects as go
 
 from sheets_connector import load_sales_sheet, safe_num, fmt_egp, fmt_number, fmt_pct
 
-st.set_page_config(page_title="Raneen Executive Dashboard", page_icon="📊", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Raneen Executive Dashboard", page_icon="📊", layout="wide", initial_sidebar_state="expanded")
 
 # ══════════════════════════════════════════════════════════
 #  DESIGN TOKENS  (matched to reference image)
@@ -642,15 +642,15 @@ if search.strip():
 st.dataframe(
     tbl_v, use_container_width=True, height=440, hide_index=True,
     column_config={
-        "Confirmed Sales": st.column_config.NumberColumn("Confirmed Sales", format="%.0f"),
-        "Received Sales": st.column_config.NumberColumn("Received Sales", format="%.0f"),
-        "Confirmed Target": st.column_config.NumberColumn("Target", format="%.0f"),
+        "Confirmed Sales": st.column_config.NumberColumn("Confirmed Sales", format="%,.0f"),
+        "Received Sales": st.column_config.NumberColumn("Received Sales", format="%,.0f"),
+        "Confirmed Target": st.column_config.NumberColumn("Target", format="%,.0f"),
         "Ach %": st.column_config.ProgressColumn("Achievement %", format="%.1f%%", min_value=0, max_value=150),
-        "Total Spending": st.column_config.NumberColumn("Marketing Spend", format="%.0f"),
+        "Total Spending": st.column_config.NumberColumn("Marketing Spend", format="%,.0f"),
         "Mkt %": st.column_config.NumberColumn("Marketing %", format="%.2f%%"),
         "MER": st.column_config.NumberColumn("MER", format="%.1fx"),
-        "No. of Orders": st.column_config.NumberColumn("Orders", format="%d"),
-        "AOV_c": st.column_config.NumberColumn("AOV", format="%.0f"),
+        "No. of Orders": st.column_config.NumberColumn("Orders", format="%,d"),
+        "AOV_c": st.column_config.NumberColumn("AOV", format="%,.0f"),
     },
 )
 buf = io.BytesIO()
