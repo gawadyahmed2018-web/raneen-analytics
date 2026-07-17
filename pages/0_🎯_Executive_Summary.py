@@ -141,7 +141,7 @@ def spark(values, color, w=150, h=38, fill=True):
 
 
 def kpi(icon, name, value, unit, target_str, delta_pct, spark_vals, color, soft,
-        is_cost=False, show_target=True):
+        is_cost=False, show_target=True, ach_pct=None):
     good = (delta_pct < 0) if is_cost else (delta_pct >= 0)
     dcol = C["green"] if good else C["red"]
     arrow = "▲" if delta_pct >= 0 else "▼"
@@ -153,12 +153,28 @@ def kpi(icon, name, value, unit, target_str, delta_pct, spark_vals, color, soft,
         f'<span class="kpi-target">{target_str}</span>'
         f'<span class="kpi-delta" style="color:{dcol}">{arrow} {abs(delta_pct):.1f}%</span>'
     )
+    # achievement bar + label (only when a target achievement % is provided)
+    ach_html = ""
+    if ach_pct is not None:
+        if is_cost:
+            acol = C["green"] if ach_pct <= 100 else (C["amber"] if ach_pct <= 110 else C["red"])
+        else:
+            acol = C["green"] if ach_pct >= 100 else (C["amber"] if ach_pct >= 85 else C["red"])
+        bar_w = min(max(ach_pct, 2), 100)
+        ach_html = (
+            f'<div style="margin-top:9px;"><div style="display:flex;justify-content:space-between;font-size:10.5px;margin-bottom:3px;">'
+            f'<span style="color:{C["ink3"]};font-weight:600;">تحقيق التارجت</span>'
+            f'<span style="color:{acol};font-weight:800;">{ach_pct:.0f}%</span></div>'
+            f'<div style="height:6px;background:{C["line"]};border-radius:100px;overflow:hidden;">'
+            f'<div style="width:{bar_w}%;height:100%;background:{acol};border-radius:100px;"></div></div></div>'
+        )
     return (
         f'<div class="kpi"><div class="kpi-top">'
         f'<div class="kpi-name"><span class="kpi-ico" style="background:{soft};color:{color}">{icon}</span>{name}</div>'
         f'</div>'
         f'<div class="kpi-val">{value}<span class="kpi-unit">{unit}</span></div>'
         f'<div class="kpi-meta">{target_html}</div>'
+        f'{ach_html}'
         f'<div style="margin-top:8px">{sp}</div></div>'
     )
 
@@ -403,13 +419,15 @@ with row1_r:
                 {"range": [mer_target, mer_target*1.5], "color": C["amber"]},
                 {"range": [mer_target*1.5, max(mer_target*3, mer*1.3)], "color": C["red"]},
             ],
-            "threshold": {"line": {"color": C["ink"], "width": 4}, "thickness": 0.85, "value": mer},
+            "threshold": {"line": {"color": C["blue"], "width": 5}, "thickness": 0.9, "value": mer_target},
         },
     ))
     gauge.update_layout(paper_bgcolor="rgba(0,0,0,0)", font=dict(family="Inter"), height=200, margin=dict(l=18, r=18, t=8, b=0))
     st.plotly_chart(gauge, use_container_width=True, config={"displayModeBar": False})
     status_txt = "Within Target" if mer_ok else ("Slightly High" if mer <= mer_target*1.5 else "Over Budget")
-    st.markdown(f'<div style="text-align:center;margin-top:-8px;padding-bottom:10px;"><span style="font-size:12px;color:{C["ink3"]}">Target &lt; {mer_target:.0f}%</span><br><span style="display:inline-flex;align-items:center;gap:5px;color:{mer_col};font-weight:700;font-size:13px;margin-top:4px;">✓ {status_txt}</span></div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div style="text-align:center;margin-top:-8px;padding-bottom:10px;">'
+                f'<span style="display:inline-block;background:{C["blue_soft"]};color:{C["blue_dark"]};font-size:16px;font-weight:800;padding:4px 16px;border-radius:100px;">🎯 Target: {mer_target:.1f}%</span><br>'
+                f'<span style="display:inline-flex;align-items:center;gap:5px;color:{mer_col};font-weight:700;font-size:13px;margin-top:8px;">✓ {status_txt}</span></div></div>', unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════
@@ -422,15 +440,15 @@ a1, a2, a3, a4, a5, a6 = st.columns(6)
 with a1:
     st.markdown(kpi("💰", "Confirmed Sales", fmt_egp(conf_sales).replace(" ج",""), "EGP",
                     fmt_egp(conf_target).replace(" ج",""), pct(conf_sales, p_conf), series("Confirmed Sales"),
-                    C["green"], C["green_soft"]), unsafe_allow_html=True)
+                    C["green"], C["green_soft"], ach_pct=(conf_sales/conf_target*100 if conf_target else 0)), unsafe_allow_html=True)
 with a2:
     st.markdown(kpi("📥", "Received Sales", fmt_egp(recv_sales).replace(" ج",""), "EGP",
                     fmt_egp(recv_target).replace(" ج",""), pct(recv_sales, p_recv), series("Received Sales"),
-                    C["teal"], "#CCFBF1"), unsafe_allow_html=True)
+                    C["teal"], "#CCFBF1", ach_pct=(recv_sales/recv_target*100 if recv_target else 0)), unsafe_allow_html=True)
 with a3:
     st.markdown(kpi("💸", "Marketing Spend", fmt_egp(total_spend).replace(" ج",""), "EGP",
                     fmt_egp(spend_target).replace(" ج",""), pct(total_spend, p_spend), series("Total Spending"),
-                    C["red"], C["red_soft"], is_cost=True), unsafe_allow_html=True)
+                    C["red"], C["red_soft"], is_cost=True, ach_pct=(total_spend/spend_target*100 if spend_target else 0)), unsafe_allow_html=True)
 with a4:
     st.markdown(kpi("🎯", "MER", f"{blended_roas:.1f}", "x",
                     "> 20x", pct(blended_roas, p_roas), series("Confirmed Sales"),
@@ -452,11 +470,13 @@ b1, b2, b3, b4, b5, b6 = st.columns(6)
 with b1:
     st.markdown(kpi("🏪", "Retail Sales", fmt_egp(retail_sales).replace(" ج",""), "EGP",
                     f"{(retail_sales/conf_sales*100 if conf_sales else 0):.1f}% of total", pct(retail_sales, p_retail),
-                    series("Retail Confirmed Sales"), C["blue"], C["blue_soft"], show_target=False), unsafe_allow_html=True)
+                    series("Retail Confirmed Sales"), C["blue"], C["blue_soft"], show_target=False,
+                    ach_pct=(retail_sales/retail_target*100 if retail_target else 0)), unsafe_allow_html=True)
 with b2:
     st.markdown(kpi("🛒", "Marketplace Sales", fmt_egp(mp_sales).replace(" ج",""), "EGP",
                     f"{(mp_sales/conf_sales*100 if conf_sales else 0):.1f}% of total", pct(mp_sales, p_mp),
-                    series("Marketplace Confirmed Sales"), C["purple"], C["purple_soft"], show_target=False), unsafe_allow_html=True)
+                    series("Marketplace Confirmed Sales"), C["purple"], C["purple_soft"], show_target=False,
+                    ach_pct=(mp_sales/mp_target*100 if mp_target else 0)), unsafe_allow_html=True)
 with b3:
     st.markdown(kpi("🧾", "AOV", fmt_egp(aov,0).replace(" ج",""), "EGP",
                     "Avg. Order Value", pct(aov, p_aov), None,
@@ -540,6 +560,27 @@ with r3c3:
 
 
 # ══════════════════════════════════════════════════════════
+#  ROW 3.5 — Revenue vs Spending (dual axis combo)
+# ══════════════════════════════════════════════════════════
+st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
+st.markdown('<div class="card">', unsafe_allow_html=True)
+st.markdown(f'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">'
+            f'<div style="font-size:14px;font-weight:750;color:{C["ink"]};">Revenue vs Spending Over Time</div>'
+            f'<div style="font-size:11px;color:{C["ink3"]};">المبيعات المؤكدة مقابل إجمالي الصرف · Blended ROAS {blended_roas:.1f}x</div></div>',
+            unsafe_allow_html=True)
+fig_rs = go.Figure()
+fig_rs.add_trace(go.Bar(x=d_ts["Date"], y=d_ts["Total Spending"], name="Spending", marker_color="rgba(240,68,56,.65)",
+                        hovertemplate="Spend: %{y:,.0f} ج<extra></extra>"))
+fig_rs.add_trace(go.Scatter(x=d_ts["Date"], y=d_ts["Confirmed Sales"], name="Confirmed Sales", mode="lines",
+                            line=dict(color=C["green"], width=3), yaxis="y2",
+                            hovertemplate="Sales: %{y:,.0f} ج<extra></extra>"))
+_plot_rs = {k: v for k, v in PLOT.items() if k not in ("yaxis",)}
+fig_rs.update_layout(**_plot_rs, height=310,
+                     yaxis=dict(title="Spending", gridcolor=C["line"], linecolor=C["line"], zeroline=False),
+                     yaxis2=dict(title="Confirmed Sales", overlaying="y", side="right", showgrid=False, zeroline=False),
+                     hovermode="x unified")
+st.plotly_chart(fig_rs, use_container_width=True, config={"displayModeBar": False})
+st.markdown('</div>', unsafe_allow_html=True)
 #  ROW 4 — Target Achievement · Forecast · Budget · Running Totals
 # ══════════════════════════════════════════════════════════
 st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
