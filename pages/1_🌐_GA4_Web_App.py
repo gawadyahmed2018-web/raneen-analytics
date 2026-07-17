@@ -15,7 +15,8 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600&display=swap');
 html, body, [class*="css"] { font-family: 'IBM Plex Sans Arabic', sans-serif; }
-#MainMenu, footer, header { visibility: hidden; }
+#MainMenu, footer { visibility: hidden; }
+section[data-testid="stHeader"] { background: rgba(0,0,0,0); }
 .block-container { padding: 1.2rem 2rem 2rem; max-width: 1400px; }
 section[data-testid="stSidebar"] { background: #F5F7FA; border-right: 1px solid #E2E6EA; }
 section[data-testid="stSidebar"] .stSelectbox label,
