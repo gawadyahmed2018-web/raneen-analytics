@@ -280,7 +280,8 @@ p_mp = a(d_prev, "Marketplace Confirmed Sales"); p_orders = a(d_prev, "No. of Or
 blended_roas = (conf_sales / total_spend) if total_spend else 0
 p_roas = (p_conf / p_spend) if p_spend else 0
 mer = (total_spend / conf_sales * 100) if conf_sales else 0
-mer_target = 4.0
+# MER target = Spending Target ÷ Confirmed Target (same ratio, using targets)
+mer_target = (spend_target / conf_target * 100) if conf_target else 4.0
 aov = (conf_sales / orders) if orders else 0
 p_aov = (p_conf / p_orders) if p_orders else 0
 confirm_rate = (conf_sales / recv_sales * 100) if recv_sales else 0
