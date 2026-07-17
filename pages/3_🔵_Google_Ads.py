@@ -18,7 +18,7 @@ from google_ads_windsor import (
     preset_to_range, previous_period,
 )
 
-st.set_page_config(page_title="Raneen Google Ads", page_icon="🔵", layout="wide")
+st.set_page_config(page_title="Raneen Google Ads", page_icon="🔵", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
