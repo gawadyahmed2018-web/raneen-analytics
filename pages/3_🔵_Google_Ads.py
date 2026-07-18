@@ -180,10 +180,24 @@ with st.sidebar:
             "last_90d": "Last 90 Days", "this_month": "This Month", "last_month": "Last Month",
         }.get(x, x),
     )
+    # real date-range picker, pre-filled from the preset (edit freely — even a single day)
+    _pf, _pt = preset_to_range(date_preset)
+    st.markdown("**📅 نطاق مخصص**")
+    _range = st.date_input(
+        "اختر الفترة", value=(_pf, _pt),
+        max_value=date.today(), format="YYYY-MM-DD",
+        label_visibility="collapsed", key=f"gads_dr_{date_preset}",
+    )
+    if isinstance(_range, (tuple, list)) and len(_range) == 2:
+        d_from, d_to = _range[0], _range[1]
+    elif isinstance(_range, (tuple, list)) and len(_range) == 1:
+        d_from = d_to = _range[0]          # single day selected
+    else:
+        d_from = d_to = _range
+    st.caption(f"الفترة: {d_from} → {d_to}")
     st.markdown("---")
     st.caption("💡 كل الأرقام مصدرها Google Ads مباشرة.")
 
-d_from, d_to = preset_to_range(date_preset)
 prev_from, prev_to = previous_period(d_from, d_to)
 
 CORE_FIELDS = ["date", "account_name", "campaign", "campaign_type", "clicks", "spend",
@@ -232,8 +246,27 @@ if df_all.empty:
 
 
 # ══════════════════════════════════════════════════════════
-#  ACCOUNT / TYPE TABS  (Search · PMax · All)
+#  ACCOUNT SELECTOR  +  CAMPAIGN-TYPE TABS
 # ══════════════════════════════════════════════════════════
+account_list = []
+if "account_name" in df_all.columns:
+    account_list = (df_all.groupby("account_name")["spend"].sum()
+                    .sort_values(ascending=False).index.astype(str).tolist())
+
+selected_account = "كل الحسابات"
+if account_list:
+    ac_l, ac_r = st.columns([1, 2])
+    with ac_l:
+        selected_account = st.selectbox("🏢 الحساب (Account)", ["كل الحسابات"] + account_list, key="gads_account")
+
+if selected_account != "كل الحسابات" and "account_name" in df_all.columns:
+    df_all = df_all[df_all["account_name"].astype(str) == selected_account]
+    if "account_name" in df_prev_all.columns:
+        df_prev_all = df_prev_all[df_prev_all["account_name"].astype(str) == selected_account]
+    if df_all.empty:
+        st.warning(f"مفيش بيانات للحساب '{selected_account}' في الفترة دي.")
+        st.stop()
+
 TYPE_TABS = {
     "🔵 All": None,
     "🔍 Search": "SEARCH",
@@ -277,6 +310,18 @@ if selected_campaigns and "campaign" in df.columns:
 campaign_label = ("All Campaigns" if not selected_campaigns
                   else selected_campaigns[0] if len(selected_campaigns) == 1
                   else f"{len(selected_campaigns)} campaigns")
+
+# campaigns visible under the current account + type + campaign filters
+# (used to keep every secondary breakdown consistent with the main view)
+allowed_campaigns = set(df["campaign"].astype(str).unique()) if "campaign" in df.columns else set()
+
+
+def scope(dfx):
+    """Restrict a breakdown frame to the campaigns currently in scope."""
+    if dfx.empty or not allowed_campaigns or "campaign" not in dfx.columns:
+        return dfx
+    return dfx[dfx["campaign"].astype(str).isin(allowed_campaigns)]
+
 
 
 # ══════════════════════════════════════════════════════════
@@ -336,6 +381,7 @@ st.markdown(f"""
     <span class="chip">🔄 Compare: {prev_from} → {prev_to}</span>
     <span class="chip" style="color:{C['purple_dark']};background:{C['purple_soft']};border-color:#D9D6FE;">🎯 {campaign_label[:30]}</span>
     <span class="chip" style="color:{C['blue_dark']};background:{C['blue_soft']};border-color:#B2DDFF;">{active_tab}</span>
+    <span class="chip">🏢 {selected_account[:24]}</span>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -490,8 +536,7 @@ with r4l:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.markdown('<div class="card-t">Search Query Intelligence — أكثر ما يبحث عنه العملاء</div>', unsafe_allow_html=True)
     df_sq = load_extra(str(d_from), str(d_to), ["search_term", "clicks", "conversions", "conversions_value"])
-    if selected_campaigns and not df_sq.empty and "campaign" in df_sq.columns:
-        df_sq = df_sq[df_sq["campaign"].isin(selected_campaigns)]
+    df_sq = scope(df_sq)
     if df_sq.empty or "search_term" not in df_sq.columns:
         st.info("مفيش بيانات search terms في الفترة دي.")
     else:
@@ -532,8 +577,7 @@ with r4r:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.markdown('<div class="card-t">Device Performance</div>', unsafe_allow_html=True)
     df_dev = load_extra(str(d_from), str(d_to), ["device", "clicks", "conversions", "conversions_value"])
-    if selected_campaigns and not df_dev.empty and "campaign" in df_dev.columns:
-        df_dev = df_dev[df_dev["campaign"].isin(selected_campaigns)]
+    df_dev = scope(df_dev)
     if df_dev.empty or "device" not in df_dev.columns:
         st.info("مفيش بيانات أجهزة.")
     else:
@@ -577,8 +621,7 @@ with r5l:
     df_is = load_extra(str(d_from), str(d_to),
                        ["impressions", "search_impression_share",
                         "search_budget_lost_impression_share", "search_rank_lost_impression_share"])
-    if selected_campaigns and not df_is.empty and "campaign" in df_is.columns:
-        df_is = df_is[df_is["campaign"].isin(selected_campaigns)]
+    df_is = scope(df_is)
     is_cols = ["search_impression_share", "search_budget_lost_impression_share", "search_rank_lost_impression_share"]
     if df_is.empty or not all(c in df_is.columns for c in is_cols):
         st.info("مفيش بيانات Impression Share (متاحة لحملات Search فقط).")
@@ -617,8 +660,7 @@ with r5r:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.markdown('<div class="card-t">Hourly Performance — أفضل أوقات الأداء</div>', unsafe_allow_html=True)
     df_hr = load_extra(str(d_from), str(d_to), ["hour_of_day", "day_of_week", "clicks", "conversions"])
-    if selected_campaigns and not df_hr.empty and "campaign" in df_hr.columns:
-        df_hr = df_hr[df_hr["campaign"].isin(selected_campaigns)]
+    df_hr = scope(df_hr)
     if df_hr.empty or "hour_of_day" not in df_hr.columns or "day_of_week" not in df_hr.columns:
         st.info("مفيش بيانات ساعات.")
     else:
@@ -664,8 +706,7 @@ with r6l:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.markdown('<div class="card-t">Top Keywords</div>', unsafe_allow_html=True)
     df_kw = load_extra(str(d_from), str(d_to), ["keyword_text", "clicks", "conversions", "conversions_value"])
-    if selected_campaigns and not df_kw.empty and "campaign" in df_kw.columns:
-        df_kw = df_kw[df_kw["campaign"].isin(selected_campaigns)]
+    df_kw = scope(df_kw)
     if df_kw.empty or "keyword_text" not in df_kw.columns:
         st.info("مفيش بيانات كلمات مفتاحية (متاحة لحملات Search فقط).")
     else:
@@ -725,6 +766,119 @@ with r6r:
         "<th>Conv.</th><th>Revenue</th><th>ROAS</th><th>CPA</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table>", unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
+
+
+
+# ══════════════════════════════════════════════════════════
+#  ROW 6.5 — STRUCTURE PERFORMANCE
+#  Ad Groups (Search) · Asset Groups (PMax) · Ads
+#  Confirmed live: ad_group_name, asset_group_name (no spend), ad_name
+# ══════════════════════════════════════════════════════════
+@st.cache_data(ttl=300, show_spinner=False)
+def load_asset_groups(dfrom, dto):
+    """asset_group_name rejects some metric combos — try with spend, fall back without."""
+    with_spend = get_google_ads_data(
+        ["date", "asset_group_name", "spend", "clicks", "conversions", "conversions_value"],
+        date_from=dfrom, date_to=dto, timeout=90)
+    if not with_spend.empty and "asset_group_name" in with_spend.columns:
+        return with_spend, True
+    basic = get_google_ads_data(
+        ["date", "asset_group_name", "clicks", "conversions"],
+        date_from=dfrom, date_to=dto, timeout=90)
+    return basic, False
+
+
+def _struct_table(g, name_col, label, has_spend=True):
+    """Render a structure table (ad group / asset group / ad)."""
+    if g.empty:
+        st.info(f"مفيش بيانات {label} في الفترة/الفلتر الحالي.")
+        return
+    head = f"<th>{label}</th>"
+    rows = []
+    for _, r in g.head(20).iterrows():
+        nm = str(r[name_col])
+        nm_short = (nm[:52] + "…") if len(nm) > 54 else nm
+        if has_spend:
+            rr = r.get("roas", 0)
+            badge = ('<span class="badge badge-green">قوي</span>' if rr >= 3 else
+                     '<span class="badge badge-amber">متوسط</span>' if rr >= 1 else
+                     '<span class="badge badge-red">ضعيف</span>')
+            rows.append(
+                f"<tr><td style='font-weight:600;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' title='{nm}'>{nm_short}</td>"
+                f"<td>{fmt_currency(r['spend'])}</td><td>{fmt_number(r['clicks'])}</td>"
+                f"<td>{r['conversions']:.1f}</td><td>{fmt_currency(r.get('conversions_value',0))}</td>"
+                f"<td>{rr:.2f}x</td><td>{fmt_currency(r.get('cpa',0),2) if r['conversions']>0 else '—'}</td>"
+                f"<td>{badge}</td></tr>")
+        else:
+            cvr = r.get("cvr", 0)
+            rows.append(
+                f"<tr><td style='font-weight:600;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' title='{nm}'>{nm_short}</td>"
+                f"<td>{fmt_number(r['clicks'])}</td><td>{r['conversions']:.1f}</td>"
+                f"<td>{cvr:.2f}%</td></tr>")
+    if has_spend:
+        header = (f"<table class='styled-table'><thead><tr>{head}<th>Cost</th><th>Clicks</th>"
+                  "<th>Conv.</th><th>Revenue</th><th>ROAS</th><th>CPA</th><th></th></tr></thead>")
+    else:
+        header = f"<table class='styled-table'><thead><tr>{head}<th>Clicks</th><th>Conv.</th><th>CVR</th></tr></thead>"
+    st.markdown(header + f"<tbody>{''.join(rows)}</tbody></table>", unsafe_allow_html=True)
+
+
+st.markdown(sec("🧩 Structure Performance", "Ad Groups · Asset Groups · Ads"), unsafe_allow_html=True)
+tab_ag, tab_asg, tab_ads = st.tabs(["🔍 Ad Groups (Search)", "⚡ Asset Groups (PMax)", "📄 Ads"])
+
+with tab_ag:
+    df_ag = scope(load_extra(str(d_from), str(d_to),
+                             ["ad_group_name", "clicks", "conversions", "conversions_value"]))
+    if df_ag.empty or "ad_group_name" not in df_ag.columns:
+        st.info("مفيش بيانات Ad Groups.")
+    else:
+        df_ag = df_ag[df_ag["ad_group_name"].notna()]
+        g = df_ag.groupby("ad_group_name", as_index=False).agg({
+            "spend": "sum", "clicks": "sum", "conversions": "sum", "conversions_value": "sum"})
+        g = g[(g["spend"] > 0) | (g["clicks"] > 0)].copy()
+        g["roas"] = (g["conversions_value"] / g["spend"]).replace([float("inf")], 0).fillna(0)
+        g["cpa"] = (g["spend"] / g["conversions"]).replace([float("inf")], 0).fillna(0)
+        _struct_table(g.sort_values("spend", ascending=False), "ad_group_name", "Ad Group", True)
+        st.caption("ℹ️ الـ Ad Groups متاحة لحملات Search فقط (بترجع فاضية لحملات PMax).")
+
+with tab_asg:
+    df_asg, asg_has_spend = load_asset_groups(str(d_from), str(d_to))
+    if df_asg.empty or "asset_group_name" not in df_asg.columns:
+        st.info("مفيش بيانات Asset Groups.")
+    else:
+        df_asg = df_asg[df_asg["asset_group_name"].notna()]
+        for c in ["spend", "clicks", "conversions", "conversions_value"]:
+            if c in df_asg.columns:
+                df_asg[c] = df_asg[c].apply(safe_num)
+        agg_map = {"clicks": "sum", "conversions": "sum"}
+        if asg_has_spend:
+            agg_map.update({"spend": "sum", "conversions_value": "sum"})
+        g = df_asg.groupby("asset_group_name", as_index=False).agg(agg_map)
+        if asg_has_spend:
+            g = g[(g["spend"] > 0) | (g["clicks"] > 0)].copy()
+            g["roas"] = (g["conversions_value"] / g["spend"]).replace([float("inf")], 0).fillna(0)
+            g["cpa"] = (g["spend"] / g["conversions"]).replace([float("inf")], 0).fillna(0)
+            _struct_table(g.sort_values("spend", ascending=False), "asset_group_name", "Asset Group", True)
+        else:
+            g = g[g["clicks"] > 0].copy()
+            g["cvr"] = (g["conversions"] / g["clicks"] * 100).replace([float("inf")], 0).fillna(0)
+            _struct_table(g.sort_values("clicks", ascending=False), "asset_group_name", "Asset Group", False)
+            st.caption("ℹ️ الـ Asset Groups بترجع Clicks و Conversions فقط — Google Ads API مابيسمحش بضم الإنفاق معاها.")
+
+with tab_ads:
+    df_ads = scope(load_extra(str(d_from), str(d_to),
+                              ["ad_name", "clicks", "conversions", "conversions_value"]))
+    if df_ads.empty or "ad_name" not in df_ads.columns:
+        st.info("مفيش بيانات Ads.")
+    else:
+        df_ads = df_ads[df_ads["ad_name"].notna()]
+        g = df_ads.groupby("ad_name", as_index=False).agg({
+            "spend": "sum", "clicks": "sum", "conversions": "sum", "conversions_value": "sum"})
+        g = g[(g["spend"] > 0) | (g["clicks"] > 0)].copy()
+        g["roas"] = (g["conversions_value"] / g["spend"]).replace([float("inf")], 0).fillna(0)
+        g["cpa"] = (g["spend"] / g["conversions"]).replace([float("inf")], 0).fillna(0)
+        _struct_table(g.sort_values("spend", ascending=False), "ad_name", "Ad", True)
+        st.caption("ℹ️ اسم الإعلان = نص العناوين. متاح لحملات Search فقط.")
 
 
 # ══════════════════════════════════════════════════════════
