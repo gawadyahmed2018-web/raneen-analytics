@@ -396,16 +396,16 @@ for i, (ico, nm, val, dl, prv, sp, col, soft, inv) in enumerate(_kpis):
 with r1[6]:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.markdown('<div class="card-t">Website vs App Contribution</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="card-sub">vs {prev_from} → {prev_to}</div>', unsafe_allow_html=True)
-    w_u, a_u = tot(web_rows, "active_users"), tot(app_rows, "active_users")
-    pw_u, pa_u = tot(pweb_rows, "active_users"), tot(papp_rows, "active_users")
+    st.markdown(f'<div class="card-sub">حسب عدد الطلبات · vs {prev_from} → {prev_to}</div>', unsafe_allow_html=True)
+    w_u, a_u = tot(web_rows, "transactions"), tot(app_rows, "transactions")
+    pw_u, pa_u = tot(pweb_rows, "transactions"), tot(papp_rows, "transactions")
     tot_u = (w_u + a_u) or 1
     w_pct, a_pct = w_u / tot_u * 100, a_u / tot_u * 100
     cc1, cc2, cc3 = st.columns([1, 1, 1])
     with cc1:
         st.markdown(f'<div class="contrib-l">🌐 Website</div>'
                     f'<div class="contrib-v" style="color:{C["blue"]}">{w_pct:.1f}%</div>'
-                    f'<div class="contrib-l">of total users</div>'
+                    f'<div class="contrib-l">of total orders</div>'
                     f'<div style="margin-top:3px">{delta_html(pct_change(w_u, pw_u))}</div>',
                     unsafe_allow_html=True)
     with cc2:
@@ -419,7 +419,7 @@ with r1[6]:
     with cc3:
         st.markdown(f'<div class="contrib-l">📱 Mobile App</div>'
                     f'<div class="contrib-v" style="color:{C["purple"]}">{a_pct:.1f}%</div>'
-                    f'<div class="contrib-l">of total users</div>'
+                    f'<div class="contrib-l">of total orders</div>'
                     f'<div style="margin-top:3px">{delta_html(pct_change(a_u, pa_u))}</div>',
                     unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
@@ -579,44 +579,131 @@ with r2[3]:
     st.markdown('</div>', unsafe_allow_html=True)
 
 
+
+# ══════════════════════════════════════════════════════════
+#  CATEGORY INTELLIGENCE — 3 metrics + comparison + drill-down
+# ══════════════════════════════════════════════════════════
+st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+st.markdown('<div class="card">', unsafe_allow_html=True)
+st.markdown('<div class="card-t">Category Intelligence</div>', unsafe_allow_html=True)
+
+CAT_METRICS = [("Views", "items_viewed", C["blue"], fmt_number),
+               ("Revenue", "item_revenue", C["green"], fmt_currency),
+               ("Units Sold", "items_purchased", C["orange"], fmt_number)]
+CAT_COLS = ["item_revenue", "items_purchased", "items_viewed", "items_added_to_cart"]
+
+
+def cat_agg(frame, dim):
+    """Aggregate item metrics by a category dimension, cleaned and sorted."""
+    if frame.empty or dim not in frame.columns:
+        return pd.DataFrame()
+    cols = [c for c in CAT_COLS if c in frame.columns]
+    g = frame.groupby(dim, as_index=False)[cols].sum()
+    g[dim] = g[dim].astype(str)
+    g = g[~g[dim].str.lower().isin(["(not set)", "nan", "none", ""])]
+    for c in CAT_COLS:
+        if c not in g.columns:
+            g[c] = 0
+    g = g[(g["item_revenue"] > 0) | (g["items_viewed"] > 0)]
+    return g.sort_values("item_revenue", ascending=False)
+
+
+def metric_bars(g, dim, label, col, color, fmt, height=250, top=10):
+    d = g.sort_values(col, ascending=False).head(top).iloc[::-1]
+    fig = go.Figure(go.Bar(x=d[col], y=d[dim], orientation="h", marker_color=color,
+                           text=[fmt(v) for v in d[col]], textposition="auto",
+                           hovertemplate="%{y}<br>" + label + ": %{x:,.0f}<extra></extra>"))
+    fig.update_layout(**PLOT, height=height)
+    return fig
+
+
+def compare_chart(g, dim, height=300, top=8):
+    """Grouped bars, each metric scaled to its own max so the three are comparable."""
+    d = g.sort_values("item_revenue", ascending=False).head(top)
+    fig = go.Figure()
+    for label, col, color, _ in CAT_METRICS:
+        mx = d[col].max() or 1
+        fig.add_trace(go.Bar(x=d[dim], y=(d[col] / mx * 100), name=label, marker_color=color,
+                             customdata=d[col],
+                             hovertemplate="%{x}<br>" + label + ": %{customdata:,.0f}"
+                                           "<br>(%{y:.0f}% من الأعلى)<extra></extra>"))
+    _p = {k: v for k, v in PLOT.items() if k != "yaxis"}
+    fig.update_layout(**_p, height=height, barmode="group",
+                      yaxis=dict(title="مؤشر نسبي (100 = الأعلى)", gridcolor=C["line"],
+                                 zeroline=False, tickfont=dict(size=9)))
+    return fig
+
+
+cat_raw = seg("item_category", CAT_COLS, timeout=90)
+g_cat = cat_agg(cat_raw, "item_category")
+
+if g_cat.empty:
+    st.info("مفيش بيانات فئات.")
+else:
+    cat_options = ["كل الفئات"] + g_cat["item_category"].tolist()
+    fc1, fc2 = st.columns([1, 3])
+    with fc1:
+        sel_cat = st.selectbox("الفئة", cat_options, key="ga4_cat_filter")
+
+    if sel_cat == "كل الفئات":
+        level_df, level_dim, level_note = g_cat, "item_category", "على مستوى الفئة الرئيسية"
+    else:
+        # drill into the sub-category dimension for the selected category
+        sub_raw = seg("item_category2", CAT_COLS + [], timeout=90)
+        if not sub_raw.empty and "item_category2" in sub_raw.columns:
+            try:
+                pair = scoped(load_dim(str(d_from), str(d_to),
+                                       ["item_category", "item_category2"], CAT_COLS, timeout=95))
+                pair = pair[pair["item_category"].astype(str) == sel_cat]
+                level_df = cat_agg(pair, "item_category2")
+            except Exception:
+                level_df = cat_agg(sub_raw, "item_category2")
+            level_dim, level_note = "item_category2", f"الفئات الفرعية داخل «{sel_cat}»"
+        else:
+            level_df = g_cat[g_cat["item_category"] == sel_cat]
+            level_dim, level_note = "item_category", f"«{sel_cat}» — الفئات الفرعية غير متاحة في الـ connector"
+
+    st.markdown(f'<div class="card-sub">{level_note}</div>', unsafe_allow_html=True)
+
+    if level_df.empty:
+        st.info("مفيش بيانات للاختيار ده.")
+    else:
+        mc = st.columns(3)
+        for col_st, (label, col, color, fmt) in zip(mc, CAT_METRICS):
+            with col_st:
+                st.markdown(f'<div style="font-size:12px;font-weight:700;color:{C["ink"]};'
+                            f'margin-bottom:4px;">{label}</div>', unsafe_allow_html=True)
+                st.plotly_chart(metric_bars(level_df, level_dim, label, col, color, fmt),
+                                use_container_width=True, config={"displayModeBar": False})
+        st.markdown(f'<div style="font-size:12px;font-weight:700;color:{C["ink"]};'
+                    f'margin:6px 0 4px;">مقارنة الفئات على المقاييس الثلاثة</div>',
+                    unsafe_allow_html=True)
+        st.plotly_chart(compare_chart(level_df, level_dim),
+                        use_container_width=True, config={"displayModeBar": False})
+
+        # supporting table
+        rows = []
+        for _, r in level_df.head(12).iterrows():
+            c_cvr = (r["items_purchased"] / r["items_viewed"] * 100) if r["items_viewed"] else 0
+            c_aov = (r["item_revenue"] / r["items_purchased"]) if r["items_purchased"] else 0
+            rows.append(f"<tr><td><b>{r[level_dim]}</b></td>"
+                        f"<td>{fmt_number(r['items_viewed'])}</td>"
+                        f"<td>{fmt_currency(r['item_revenue'])}</td>"
+                        f"<td>{fmt_number(r['items_purchased'])}</td>"
+                        f"<td>{c_cvr:.2f}%</td><td>{fmt_currency(c_aov,0)}</td></tr>")
+        st.markdown("<table class='tbl' style='margin-top:8px'><thead><tr><th>Category</th><th>Views</th>"
+                    "<th>Revenue</th><th>Units Sold</th><th>View→Buy</th><th>AOV</th></tr></thead>"
+                    f"<tbody>{''.join(rows)}</tbody></table>", unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
+
+
 # ══════════════════════════════════════════════════════════
 #  ROW 3 — CATEGORY · TOP PRODUCTS · USERS · GEOGRAPHY
 # ══════════════════════════════════════════════════════════
 st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
-r3 = st.columns([1.15, 1.25, 0.85, 1.05])
+r3 = st.columns([1.35, 0.85, 1.05])
 
 with r3[0]:
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown('<div class="card-t">Category Performance</div>', unsafe_allow_html=True)
-    st.markdown('<div class="card-sub">حسب الإيراد</div>', unsafe_allow_html=True)
-    cat = seg("item_category", ["item_revenue", "items_purchased", "items_viewed",
-                                "items_added_to_cart"], timeout=90)
-    if cat.empty or "item_category" not in cat.columns:
-        st.info("مفيش بيانات فئات.")
-    else:
-        g = cat.groupby("item_category", as_index=False).agg(
-            {"item_revenue": "sum", "items_purchased": "sum",
-             "items_viewed": "sum", "items_added_to_cart": "sum"})
-        g["item_category"] = g["item_category"].astype(str)
-        g = g[(g["item_revenue"] > 0) &
-              (~g["item_category"].str.lower().isin(["(not set)", "nan", "none", ""]))]
-        g = g.sort_values("item_revenue", ascending=False)
-        rows = []
-        for _, r in g.head(8).iterrows():
-            c_cvr = (r["items_purchased"] / r["items_viewed"] * 100) if r["items_viewed"] else 0
-            c_aov = (r["item_revenue"] / r["items_purchased"]) if r["items_purchased"] else 0
-            rows.append(f"<tr><td><b>{r['item_category']}</b></td>"
-                        f"<td>{fmt_number(r['items_viewed'])}</td>"
-                        f"<td>{fmt_currency(r['item_revenue'])}</td>"
-                        f"<td>{c_cvr:.2f}%</td>"
-                        f"<td>{fmt_number(r['items_purchased'])}</td>"
-                        f"<td>{fmt_currency(c_aov,0)}</td></tr>")
-        st.markdown("<table class='tbl'><thead><tr><th>Category</th><th>Views</th><th>Revenue</th>"
-                    "<th>CVR</th><th>Sold</th><th>AOV</th></tr></thead>"
-                    f"<tbody>{''.join(rows)}</tbody></table>", unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-
-with r3[1]:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.markdown('<div class="card-t">Top Products</div>', unsafe_allow_html=True)
     st.markdown('<div class="card-sub">حسب الإيراد</div>', unsafe_allow_html=True)
@@ -644,7 +731,7 @@ with r3[1]:
                     f"<tbody>{''.join(rows)}</tbody></table>", unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-with r3[2]:
+with r3[1]:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.markdown('<div class="card-t">Users</div>', unsafe_allow_html=True)
     st.markdown('<div class="card-sub">جديد مقابل عائد</div>', unsafe_allow_html=True)
@@ -680,7 +767,7 @@ with r3[2]:
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
     st.markdown('</div>', unsafe_allow_html=True)
 
-with r3[3]:
+with r3[2]:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.markdown('<div class="card-t">Geographic Performance</div>', unsafe_allow_html=True)
     st.markdown('<div class="card-sub">حسب الجلسات</div>', unsafe_allow_html=True)
@@ -711,7 +798,7 @@ with r3[3]:
 #          DAY×HOUR HEATMAP · ALERTS
 # ══════════════════════════════════════════════════════════
 st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
-r4 = st.columns([1.35, 1.05, 0.85, 1, 0.95])
+r4 = st.columns([1.25, 1.55, 0.8, 1.05, 0.9])
 
 CAMP_SRC = {"📘 Meta": "session_manual_campaign_name", "🔵 Google Ads": "session_google_ads_campaign_name"}
 
@@ -777,14 +864,31 @@ with r4[1]:
             if gp.empty:
                 st.info("مفيش منتجات.")
             else:
+                gp["aov"] = (gp["item_revenue"] / gp["items_purchased"]).replace([np.inf], 0).fillna(0)
+                tot_r = gp["item_revenue"].sum()
+                st.markdown(f'<div style="display:flex;gap:20px;margin-bottom:8px;">'
+                            f'<div><div style="font-size:10px;color:{C["ink3"]};font-weight:600;">REVENUE</div>'
+                            f'<div style="font-size:17px;font-weight:800;color:{C["green"]};">'
+                            f'{fmt_currency(tot_r)}</div></div>'
+                            f'<div><div style="font-size:10px;color:{C["ink3"]};font-weight:600;">PRODUCTS</div>'
+                            f'<div style="font-size:17px;font-weight:800;color:{C["blue"]};">'
+                            f'{fmt_number(len(gp))}</div></div>'
+                            f'<div><div style="font-size:10px;color:{C["ink3"]};font-weight:600;">UNITS</div>'
+                            f'<div style="font-size:17px;font-weight:800;color:{C["orange"]};">'
+                            f'{fmt_number(gp["items_purchased"].sum())}</div></div></div>',
+                            unsafe_allow_html=True)
                 rows = []
-                for _, r in gp.head(7).iterrows():
-                    nm = str(r["item_name"]); short = (nm[:22] + "…") if len(nm) > 24 else nm
+                for _, r in gp.head(12).iterrows():
+                    nm = str(r["item_name"]); short = (nm[:38] + "…") if len(nm) > 40 else nm
+                    shr = r["item_revenue"] / tot_r * 100 if tot_r else 0
                     rows.append(f"<tr><td title='{nm}'><b>{short}</b></td>"
                                 f"<td>{fmt_currency(r['item_revenue'])}</td>"
-                                f"<td>{fmt_number(r['items_purchased'])}</td></tr>")
+                                f"<td>{fmt_number(r['items_purchased'])}</td>"
+                                f"<td>{fmt_currency(r['aov'],0)}</td>"
+                                f"<td>{shr:.1f}%</td></tr>")
                 st.markdown("<table class='tbl'><thead><tr><th>Product</th><th>Revenue</th>"
-                            f"<th>Qty</th></tr></thead><tbody>{''.join(rows)}</tbody></table>",
+                            "<th>Qty</th><th>AOV</th><th>Share</th></tr></thead>"
+                            f"<tbody>{''.join(rows)}</tbody></table>",
                             unsafe_allow_html=True)
         except Exception:
             st.info("مفيش بيانات منتجات.")
@@ -835,32 +939,40 @@ with r4[2]:
 
 with r4[3]:
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown('<div class="card-t">Users by Day & Hour</div>', unsafe_allow_html=True)
+    st.markdown('<div class="card-t">Revenue by Day & Hour</div>', unsafe_allow_html=True)
+    st.markdown('<div class="card-sub">أفضل أوقات الإيراد</div>', unsafe_allow_html=True)
     hr = pd.DataFrame()
     try:
-        hr = scoped(load_dim(str(d_from), str(d_to), ["hour", "day_of_week"], ["sessions"], timeout=85))
+        hr = scoped(load_dim(str(d_from), str(d_to), ["hour", "day_of_week"],
+                             ["purchase_revenue", "sessions", "transactions"], timeout=85))
     except Exception:
         hr = pd.DataFrame()
     if hr.empty or "hour" not in hr.columns:
-        st.info("حقل الساعة غير متاح في الـ connector.")
+        st.info("حقل الساعة غير متاح.")
     else:
         hr["hour"] = pd.to_numeric(hr["hour"], errors="coerce")
         hr = hr.dropna(subset=["hour"])
         hr["hour"] = hr["hour"].astype(int)
-        pv = hr.groupby(["day_of_week", "hour"])["sessions"].sum().reset_index()
-        order = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"]
+        pv = hr.groupby(["day_of_week", "hour"])["purchase_revenue"].sum().reset_index()
+        order = ["SATURDAY", "SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"]
         short = {d: d[:3].title() for d in order}
-        pt = pv.pivot(index="day_of_week", columns="hour", values="sessions").fillna(0)
+        pt = pv.pivot(index="day_of_week", columns="hour", values="purchase_revenue").fillna(0)
         pt = pt.reindex([d for d in order if d in pt.index])
         fig = go.Figure(go.Heatmap(z=pt.values, x=[f"{h:02d}" for h in pt.columns],
                                    y=[short.get(d, str(d)[:3]) for d in pt.index],
-                                   colorscale=[[0, "#EEF2FF"], [0.5, "#93B4FD"], [1, C["indigo"]]],
+                                   colorscale=[[0, "#ECFDF5"], [0.5, "#6EE7B7"], [1, C["green_dark"]]],
                                    showscale=False,
-                                   hovertemplate="%{y} %{x}:00<br>%{z:,.0f}<extra></extra>"))
+                                   hovertemplate="%{y} %{x}:00<br>%{z:,.0f} ج<extra></extra>"))
         fig.update_layout(**{k: v for k, v in PLOT.items() if k in ("paper_bgcolor", "plot_bgcolor", "font")},
-                          height=210, margin=dict(l=4, r=4, t=6, b=4),
+                          height=200, margin=dict(l=4, r=4, t=6, b=4),
                           xaxis=dict(tickfont=dict(size=8)), yaxis=dict(tickfont=dict(size=9)))
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        if not pv.empty:
+            top = pv.sort_values("purchase_revenue", ascending=False).iloc[0]
+            st.markdown(f'<div style="font-size:11px;color:{C["ink2"]};margin-top:2px;">'
+                        f'🏆 أعلى إيراد: <b>{short.get(top["day_of_week"], top["day_of_week"])} '
+                        f'{int(top["hour"]):02d}:00</b> · {fmt_currency(top["purchase_revenue"])}</div>',
+                        unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
 with r4[4]:
