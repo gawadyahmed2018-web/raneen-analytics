@@ -7,9 +7,7 @@ import pandas as pd
 import streamlit as st
 
 # Published CSV export URL (derived from the pubhtml link)
-from config import SALES_SHEET_CSV_URL, redact
-
-SHEET_CSV_URL = SALES_SHEET_CSV_URL
+from config import require_sheet_url, redact
 
 NUM_COLS = [
     "Dollar Rate", "Facebook Spending (USD)", "Facebook Spending",
@@ -27,7 +25,7 @@ NUM_COLS = [
 def load_sales_sheet():
     """Load and clean the sales overview sheet. Returns a cleaned DataFrame."""
     try:
-        df = pd.read_csv(SHEET_CSV_URL)
+        df = pd.read_csv(require_sheet_url())
     except Exception as e:
         st.session_state.setdefault("_sheet_errors", []).append(redact(e))
         return pd.DataFrame()
