@@ -7,11 +7,9 @@ import pandas as pd
 import streamlit as st
 
 # Published CSV export URL (derived from the pubhtml link)
-SHEET_CSV_URL = (
-    "https://docs.google.com/spreadsheets/d/e/"
-    "2PACX-1vToNIxR30TywAr5X3Ok7EOtRoMVnHGttVb6AxUZpkUT8161rVVGCIZ542n9K_SEjsAzGo3yWFUuTuUr"
-    "/pub?gid=559443792&single=true&output=csv"
-)
+from config import SALES_SHEET_CSV_URL, redact
+
+SHEET_CSV_URL = SALES_SHEET_CSV_URL
 
 NUM_COLS = [
     "Dollar Rate", "Facebook Spending (USD)", "Facebook Spending",
@@ -31,7 +29,7 @@ def load_sales_sheet():
     try:
         df = pd.read_csv(SHEET_CSV_URL)
     except Exception as e:
-        st.session_state.setdefault("_sheet_errors", []).append(str(e))
+        st.session_state.setdefault("_sheet_errors", []).append(redact(e))
         return pd.DataFrame()
 
     # Parse date
