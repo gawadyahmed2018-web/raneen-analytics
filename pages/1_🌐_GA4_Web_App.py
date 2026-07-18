@@ -1,11 +1,11 @@
 """
-Raneen GA4 — Command Center.
+Raneen GA4 — Decision Intelligence Center.
 Source: Google Analytics 4 (Web + App) via Windsor.ai.
 
-One long page with three scopes: All · Web only · App only.
-Sections: AI summary, KPI grid, customer journey funnel, revenue vs users,
-traffic sources, landing pages, top events, devices, geography, hourly heatmap,
-category performance, campaigns, and products by campaign.
+Built as an analyst's tool, not a chart gallery:
+decision bar (quantified problems) · health scorecard · money map (RPS + index) ·
+segmented funnel explorer · opportunity engine · product intelligence ·
+landing-page quality · web-vs-app economics · anomaly radar · campaigns.
 """
 
 import io
@@ -13,6 +13,7 @@ from datetime import date, datetime, timedelta
 
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 
@@ -20,9 +21,6 @@ from windsor import get_windsor_data, safe_num, fmt_currency, fmt_number, fmt_pc
 
 st.set_page_config(page_title="Raneen GA4", page_icon="📊", layout="wide", initial_sidebar_state="expanded")
 
-# ══════════════════════════════════════════════════════════
-#  DESIGN TOKENS  (shared system across the hub)
-# ══════════════════════════════════════════════════════════
 C = {
     "green": "#16B364", "green_soft": "#DCFAE6", "green_dark": "#087443",
     "amber": "#F5A623", "amber_soft": "#FEF0C7", "amber_dark": "#B54708",
@@ -73,29 +71,26 @@ section[data-testid="stSidebar"] label {{ color:{C['ink2']} !important; font-siz
 .kpi-web {{ color:{C['blue']}; font-weight:700; }}
 .kpi-app {{ color:{C['purple']}; font-weight:700; }}
 
-.sec {{ display:flex; align-items:center; gap:10px; margin:20px 0 12px; }}
+.sec {{ display:flex; align-items:center; gap:10px; margin:22px 0 12px; }}
 .sec-t {{ font-size:16px; font-weight:750; color:{C['ink']}; letter-spacing:-.01em; }}
 .sec-s {{ font-size:12px; color:{C['ink3']}; margin-left:auto; }}
-
 .card {{ background:{C['card']}; border:1px solid {C['line']}; border-radius:18px; padding:20px;
   box-shadow:0 1px 3px rgba(15,23,42,.04); height:100%; }}
 .card-t {{ font-size:14px; font-weight:750; color:{C['ink']}; margin-bottom:10px; }}
+.card-sub {{ font-size:11.5px; color:{C['ink3']}; font-weight:500; margin:-6px 0 12px; }}
 
-.ai-row {{ display:flex; align-items:flex-start; gap:9px; padding:8px 0; font-size:13px; color:{C['ink2']}; line-height:1.6; }}
-.ai-row b {{ color:{C['ink']}; }}
-.ai-ico {{ font-size:14px; }}
+/* decision bar */
+.dec {{ display:flex; align-items:flex-start; gap:11px; padding:13px 16px; border-radius:14px;
+  margin-bottom:9px; border:1px solid transparent; }}
+.dec-ico {{ font-size:17px; line-height:1.4; }}
+.dec-txt {{ font-size:13px; line-height:1.6; flex:1; }}
+.dec-val {{ font-size:14px; font-weight:800; white-space:nowrap; }}
+.dec-red {{ background:{C['red_soft']}; border-color:#FECDCA; color:{C['red_dark']}; }}
+.dec-amber {{ background:{C['amber_soft']}; border-color:#FEDF89; color:{C['amber_dark']}; }}
+.dec-green {{ background:{C['green_soft']}; border-color:#A6F4C5; color:{C['green_dark']}; }}
+.dec-blue {{ background:{C['blue_soft']}; border-color:#B2DDFF; color:{C['blue_dark']}; }}
 
-/* funnel */
-.fn-wrap {{ display:flex; align-items:flex-start; justify-content:space-between; gap:4px; }}
-.fn-step {{ flex:1; text-align:center; }}
-.fn-circle {{ width:52px; height:52px; border-radius:16px; margin:0 auto 9px; display:flex;
-  align-items:center; justify-content:center; font-size:22px; }}
-.fn-label {{ font-size:11.5px; color:{C['ink2']}; font-weight:600; }}
-.fn-value {{ font-size:19px; font-weight:800; color:{C['ink']}; margin-top:3px; letter-spacing:-.02em; }}
-.fn-pct {{ font-size:11px; color:{C['ink3']}; margin-top:2px; }}
-.fn-arrow {{ align-self:center; color:{C['ink3']}; font-size:16px; padding:0 2px; margin-top:-28px; }}
-.fn-drop {{ display:inline-block; font-size:10.5px; font-weight:700; padding:3px 9px; border-radius:100px; margin-top:8px; }}
-
+.idx {{ display:inline-block; font-size:10.5px; font-weight:800; padding:2px 8px; border-radius:100px; }}
 .styled-table {{ width:100%; border-collapse:collapse; font-size:12.5px; }}
 .styled-table th {{ background:#F8FAFC; color:{C['ink2']}; font-weight:600; font-size:11px; text-transform:uppercase;
   letter-spacing:.03em; padding:10px 12px; border-bottom:1px solid {C['line']}; text-align:left; }}
@@ -110,13 +105,15 @@ section[data-testid="stSidebar"] label {{ color:{C['ink2']} !important; font-siz
 .legend-dot {{ width:9px; height:9px; border-radius:3px; }}
 .legend-name {{ color:{C['ink2']}; font-weight:600; flex:1; }}
 .legend-pct {{ color:{C['ink']}; font-weight:700; }}
-.legend-val {{ color:{C['ink3']}; min-width:60px; text-align:right; }}
-.bar-row {{ display:flex; align-items:center; gap:10px; margin-bottom:9px; }}
-.bar-name {{ font-size:12px; color:{C['ink2']}; min-width:120px; font-weight:600;
-  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
-.bar-track {{ flex:1; height:9px; background:{C['line']}; border-radius:100px; overflow:hidden; }}
-.bar-fill {{ height:100%; border-radius:100px; }}
-.bar-val {{ font-size:12px; color:{C['ink']}; min-width:70px; text-align:right; font-weight:700; }}
+.legend-val {{ color:{C['ink3']}; min-width:62px; text-align:right; }}
+
+/* mini funnel bars for the segmented explorer */
+.mf-name {{ font-size:12.5px; font-weight:700; color:{C['ink']}; margin-bottom:7px; }}
+.mf-step {{ display:flex; align-items:center; gap:9px; margin-bottom:5px; }}
+.mf-lbl {{ font-size:10.5px; color:{C['ink3']}; min-width:82px; }}
+.mf-track {{ flex:1; height:16px; background:{C['line']}; border-radius:5px; overflow:hidden; }}
+.mf-fill {{ height:100%; border-radius:5px; }}
+.mf-val {{ font-size:10.5px; color:{C['ink2']}; min-width:74px; text-align:right; font-weight:600; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -132,7 +129,7 @@ PLOT = dict(
 
 
 # ══════════════════════════════════════════════════════════
-#  HELPERS
+#  ANALYST HELPERS
 # ══════════════════════════════════════════════════════════
 def spark(values, color, w=150, h=34):
     vals = [safe_num(v) for v in values if v is not None]
@@ -144,18 +141,14 @@ def spark(values, color, w=150, h=34):
     pts = [((i/(n-1))*w, h - ((v-mn)/rng)*h) for i, v in enumerate(vals)]
     line = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
     lx, ly = pts[-1]
-    return (
-        f'<svg width="100%" height="{h}" viewBox="0 0 {w} {h+3}" preserveAspectRatio="none" style="display:block;">'
-        f'<polygon points="0,{h} {line} {w},{h}" fill="{color}" opacity="0.08"/>'
-        f'<polyline points="{line}" fill="none" stroke="{color}" stroke-width="2" '
-        f'stroke-linecap="round" stroke-linejoin="round"/>'
-        f'<circle cx="{lx:.1f}" cy="{ly:.1f}" r="2.6" fill="{color}"/></svg>'
-    )
+    return (f'<svg width="100%" height="{h}" viewBox="0 0 {w} {h+3}" preserveAspectRatio="none" style="display:block;">'
+            f'<polygon points="0,{h} {line} {w},{h}" fill="{color}" opacity="0.08"/>'
+            f'<polyline points="{line}" fill="none" stroke="{color}" stroke-width="2" '
+            f'stroke-linecap="round" stroke-linejoin="round"/>'
+            f'<circle cx="{lx:.1f}" cy="{ly:.1f}" r="2.6" fill="{color}"/></svg>')
 
 
-def kpi(icon, name, value, unit, delta_pct, spark_vals, color, soft,
-        sub="", is_bad_up=False, split=None):
-    """split = (web_value, app_value) rendered as a small footer when scope is All."""
+def kpi(icon, name, value, unit, delta_pct, spark_vals, color, soft, sub="", is_bad_up=False, split=None):
     sp = spark(spark_vals, color) if spark_vals else ""
     delta_html = ""
     if delta_pct is not None:
@@ -169,13 +162,11 @@ def kpi(icon, name, value, unit, delta_pct, spark_vals, color, soft,
         split_html = (f'<div class="kpi-split"><span class="kpi-web">🌐 {split[0]}</span>'
                       f'<span style="color:{C["ink3"]}">·</span>'
                       f'<span class="kpi-app">📱 {split[1]}</span></div>')
-    return (
-        f'<div class="kpi">'
-        f'<div class="kpi-name"><span class="kpi-ico" style="background:{soft};color:{color}">{icon}</span>{name}</div>'
-        f'<div class="kpi-val">{value}<span class="kpi-unit">{unit}</span></div>'
-        f'<div class="kpi-meta">{sub_html}{delta_html}</div>'
-        f'{split_html}<div style="margin-top:8px">{sp}</div></div>'
-    )
+    return (f'<div class="kpi">'
+            f'<div class="kpi-name"><span class="kpi-ico" style="background:{soft};color:{color}">{icon}</span>{name}</div>'
+            f'<div class="kpi-val">{value}<span class="kpi-unit">{unit}</span></div>'
+            f'<div class="kpi-meta">{sub_html}{delta_html}</div>'
+            f'{split_html}<div style="margin-top:8px">{sp}</div></div>')
 
 
 def sec(title, sub=""):
@@ -184,25 +175,64 @@ def sec(title, sub=""):
 
 
 def pct_change(cur, prev):
-    if prev == 0:
+    return 0.0 if prev == 0 else (cur - prev) / prev * 100
+
+
+def idx_pill(index):
+    """Performance index vs site average (100 = on par)."""
+    if index >= 115:  bg, fg = C["green_soft"], C["green_dark"]
+    elif index >= 85: bg, fg = C["blue_soft"], C["blue_dark"]
+    elif index >= 60: bg, fg = C["amber_soft"], C["amber_dark"]
+    else:             bg, fg = C["red_soft"], C["red_dark"]
+    return f'<span class="idx" style="background:{bg};color:{fg}">{index:.0f}</span>'
+
+
+def segment_stats(frame, dim):
+    """Aggregate funnel metrics by a dimension and derive CVR, RPS and AOV."""
+    if frame.empty or dim not in frame.columns:
+        return pd.DataFrame()
+    cols = [c for c in ["sessions", "active_users", "items_viewed", "add_to_carts",
+                        "checkouts", "transactions", "purchase_revenue"] if c in frame.columns]
+    g = frame.groupby(dim, as_index=False)[cols].sum()
+    g = g[g.get("sessions", pd.Series(dtype=float)) > 0].copy()
+    if g.empty:
+        return g
+    g["cvr"] = (g["transactions"] / g["sessions"] * 100).replace([np.inf, -np.inf], 0).fillna(0)
+    g["rps"] = (g["purchase_revenue"] / g["sessions"]).replace([np.inf, -np.inf], 0).fillna(0)
+    g["aov"] = (g["purchase_revenue"] / g["transactions"]).replace([np.inf, -np.inf], 0).fillna(0)
+    g[dim] = g[dim].astype(str)
+    g = g[~g[dim].str.lower().isin(["(not set)", "nan", "none", ""])]
+    return g.sort_values("purchase_revenue", ascending=False)
+
+
+def opportunity(seg_sessions, seg_cvr, target_cvr, seg_aov):
+    """Incremental revenue if a segment converted at the target rate."""
+    if seg_cvr >= target_cvr or seg_sessions <= 0 or seg_aov <= 0:
         return 0.0
-    return (cur - prev) / prev * 100
+    extra_trans = seg_sessions * (target_cvr - seg_cvr) / 100
+    return extra_trans * seg_aov
+
+
+def funnel_steps(row):
+    """Ordered funnel steps present in a segment row."""
+    order = [("Sessions", "sessions"), ("Item Views", "items_viewed"),
+             ("Add to Cart", "add_to_carts"), ("Checkout", "checkouts"),
+             ("Purchase", "transactions")]
+    return [(lbl, float(row[c])) for lbl, c in order if c in row.index and float(row[c]) > 0]
 
 
 # ══════════════════════════════════════════════════════════
-#  SIDEBAR — period + custom range
+#  PERIOD
 # ══════════════════════════════════════════════════════════
 def preset_range(preset):
     today = date.today()
-    m = {
-        "last_7d":  (today - timedelta(days=7),  today - timedelta(days=1)),
-        "last_14d": (today - timedelta(days=14), today - timedelta(days=1)),
-        "last_30d": (today - timedelta(days=30), today - timedelta(days=1)),
-        "last_90d": (today - timedelta(days=90), today - timedelta(days=1)),
-        "this_month": (today.replace(day=1), today - timedelta(days=1)),
-        "last_month": ((today.replace(day=1) - timedelta(days=1)).replace(day=1),
-                       today.replace(day=1) - timedelta(days=1)),
-    }
+    m = {"last_7d": (today - timedelta(days=7), today - timedelta(days=1)),
+         "last_14d": (today - timedelta(days=14), today - timedelta(days=1)),
+         "last_30d": (today - timedelta(days=30), today - timedelta(days=1)),
+         "last_90d": (today - timedelta(days=90), today - timedelta(days=1)),
+         "this_month": (today.replace(day=1), today - timedelta(days=1)),
+         "last_month": ((today.replace(day=1) - timedelta(days=1)).replace(day=1),
+                        today.replace(day=1) - timedelta(days=1))}
     return m.get(preset, m["last_30d"])
 
 
@@ -215,50 +245,39 @@ def previous_range(dfrom, dto):
 
 with st.sidebar:
     st.markdown("## 📊 Google Analytics 4")
-    st.caption("Web + App — عبر Windsor.ai")
+    st.caption("Decision Intelligence — Web + App")
     st.markdown("---")
     date_preset = st.selectbox(
-        "Date Range",
-        ["last_30d", "last_7d", "last_14d", "last_90d", "this_month", "last_month"],
-        format_func=lambda x: {
-            "last_7d": "Last 7 Days", "last_14d": "Last 14 Days", "last_30d": "Last 30 Days",
-            "last_90d": "Last 90 Days", "this_month": "This Month", "last_month": "Last Month",
-        }.get(x, x),
-    )
+        "Date Range", ["last_30d", "last_7d", "last_14d", "last_90d", "this_month", "last_month"],
+        format_func=lambda x: {"last_7d": "Last 7 Days", "last_14d": "Last 14 Days",
+                               "last_30d": "Last 30 Days", "last_90d": "Last 90 Days",
+                               "this_month": "This Month", "last_month": "Last Month"}.get(x, x))
     _pf, _pt = preset_range(date_preset)
     st.markdown("**📅 نطاق مخصص**")
     _range = st.date_input("اختر الفترة", value=(_pf, _pt), max_value=date.today(),
                            format="YYYY-MM-DD", label_visibility="collapsed",
                            key=f"ga4_dr_{date_preset}")
     if isinstance(_range, (tuple, list)) and len(_range) == 2:
-        d_from, d_to = _range[0], _range[1]
+        d_from, d_to = _range
     elif isinstance(_range, (tuple, list)) and len(_range) == 1:
         d_from = d_to = _range[0]
     else:
         d_from = d_to = _range
     st.caption(f"الفترة: {d_from} → {d_to}")
     st.markdown("---")
-    st.caption("💡 المصدر: GA4 مباشرة (Raneen.com + Raneen Mobile APP)")
+    st.caption("💡 GA4 مباشرة — Raneen.com + Raneen Mobile APP")
 
 prev_from, prev_to = previous_range(d_from, d_to)
 
-
-# ══════════════════════════════════════════════════════════
-#  CORE DATA  (one merged request per account)
-# ══════════════════════════════════════════════════════════
-CORE_FIELDS = ["date", "sessions", "active_users", "purchase_revenue", "transactions",
-               "add_to_carts", "checkouts", "items_viewed", "bounce_rate",
-               "average_session_duration"]
-
-NUMERIC = ["sessions", "active_users", "purchase_revenue", "transactions",
-           "add_to_carts", "checkouts", "items_viewed", "bounce_rate",
-           "average_session_duration"]
+FUNNEL_METRICS = ["sessions", "active_users", "items_viewed", "add_to_carts",
+                  "checkouts", "transactions", "purchase_revenue"]
+CORE_FIELDS = ["date"] + FUNNEL_METRICS + ["bounce_rate", "average_session_duration"]
 
 
-def _clean(df, cols=None):
+def _clean(df, cols):
     if df.empty:
         return df
-    for c in (cols or NUMERIC):
+    for c in cols:
         if c in df.columns:
             df[c] = df[c].apply(safe_num)
     return df
@@ -266,15 +285,15 @@ def _clean(df, cols=None):
 
 @st.cache_data(ttl=300, show_spinner="Loading GA4 data...")
 def load_core(dfrom, dto):
-    return _clean(get_windsor_data(CORE_FIELDS, date_from=dfrom, date_to=dto, source="both", timeout=60))
+    return _clean(get_windsor_data(CORE_FIELDS, date_from=dfrom, date_to=dto, source="both", timeout=60),
+                  FUNNEL_METRICS + ["bounce_rate", "average_session_duration"])
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def load_dim(dfrom, dto, dims, metrics, timeout=60):
-    """Fetch one breakdown (dimension + metrics) for both accounts."""
-    return _clean(get_windsor_data(list(dims) + list(metrics),
-                                   date_from=dfrom, date_to=dto, source="both", timeout=timeout),
-                  cols=metrics)
+def load_dim(dfrom, dto, dims, metrics=None, timeout=75):
+    mets = list(metrics or FUNNEL_METRICS)
+    return _clean(get_windsor_data(list(dims) + mets, date_from=dfrom, date_to=dto,
+                                   source="both", timeout=timeout), mets)
 
 
 df_all = load_core(str(d_from), str(d_to))
@@ -282,15 +301,15 @@ df_prev_all = load_core(prev_from, prev_to)
 
 if df_all.empty:
     st.markdown('<div class="topbar"><div class="brand"><div class="brand-logo">📊</div>'
-                '<div><div class="brand-t">Google Analytics 4 — Command Center</div>'
-                '<div class="brand-s">Customer behavior & website performance</div></div></div></div>',
+                '<div><div class="brand-t">Google Analytics 4 — Decision Center</div>'
+                '<div class="brand-s">Customer behaviour & revenue intelligence</div></div></div></div>',
                 unsafe_allow_html=True)
-    st.warning("⚠️ لا توجد بيانات من GA4 في الفترة دي. تأكد من الاتصال على Windsor.ai.")
+    st.warning("⚠️ لا توجد بيانات من GA4 في الفترة دي.")
     st.stop()
 
 
 # ══════════════════════════════════════════════════════════
-#  SCOPE TABS — All · Web only · App only
+#  SCOPE
 # ══════════════════════════════════════════════════════════
 SCOPES = {"🔀 All (Web + App)": "both", "🌐 Web only": "web", "📱 App only": "app"}
 scope_label = st.radio("النطاق", list(SCOPES.keys()), horizontal=True,
@@ -298,56 +317,52 @@ scope_label = st.radio("النطاق", list(SCOPES.keys()), horizontal=True,
 scope = SCOPES[scope_label]
 
 
-def apply_scope(df):
-    if df.empty or scope == "both" or "source" not in df.columns:
-        return df
-    return df[df["source"] == scope]
+def apply_scope(frame):
+    if frame.empty or scope == "both" or "source" not in frame.columns:
+        return frame
+    return frame[frame["source"] == scope]
 
 
 df = apply_scope(df_all).copy()
 df_prev = apply_scope(df_prev_all).copy()
-
 if df.empty:
-    st.info(f"مفيش بيانات لـ {scope_label} في الفترة دي.")
+    st.info(f"مفيش بيانات لـ {scope_label}.")
     st.stop()
 
 
 # ══════════════════════════════════════════════════════════
-#  TOTALS
+#  TOTALS & SITE BENCHMARKS
 # ══════════════════════════════════════════════════════════
 def tot(frame, col):
     return frame[col].sum() if (not frame.empty and col in frame.columns) else 0
 
 
 def wavg(frame, col, weight="sessions"):
-    """Session-weighted average — the correct way to combine rates."""
     if frame.empty or col not in frame.columns or weight not in frame.columns:
         return 0
     w = frame[weight].fillna(0)
-    if w.sum() == 0:
-        return 0
-    return (frame[col].fillna(0) * w).sum() / w.sum()
+    return 0 if w.sum() == 0 else (frame[col].fillna(0) * w).sum() / w.sum()
 
 
-t_sessions = tot(df, "sessions");     t_users = tot(df, "active_users")
+t_sessions = tot(df, "sessions");        t_users = tot(df, "active_users")
 t_revenue = tot(df, "purchase_revenue"); t_trans = tot(df, "transactions")
-t_atc = tot(df, "add_to_carts");      t_checkout = tot(df, "checkouts")
+t_atc = tot(df, "add_to_carts");         t_checkout = tot(df, "checkouts")
 t_views = tot(df, "items_viewed")
-t_bounce = wavg(df, "bounce_rate");   t_dur = wavg(df, "average_session_duration")
+t_bounce = wavg(df, "bounce_rate");      t_dur = wavg(df, "average_session_duration")
 
-p_sessions = tot(df_prev, "sessions"); p_users = tot(df_prev, "active_users")
+p_sessions = tot(df_prev, "sessions");   p_users = tot(df_prev, "active_users")
 p_revenue = tot(df_prev, "purchase_revenue"); p_trans = tot(df_prev, "transactions")
 p_bounce = wavg(df_prev, "bounce_rate")
 
-cvr = (t_trans / t_sessions * 100) if t_sessions else 0
+# site-wide benchmarks — every segment is indexed against these
+BM_CVR = (t_trans / t_sessions * 100) if t_sessions else 0
+BM_RPS = (t_revenue / t_sessions) if t_sessions else 0
+BM_AOV = (t_revenue / t_trans) if t_trans else 0
 p_cvr = (p_trans / p_sessions * 100) if p_sessions else 0
-aov = (t_revenue / t_trans) if t_trans else 0
 p_aov = (p_revenue / p_trans) if p_trans else 0
-rps = (t_revenue / t_sessions) if t_sessions else 0
 engagement = (100 - t_bounce * 100) if t_bounce <= 1 else (100 - t_bounce)
 p_engagement = (100 - p_bounce * 100) if p_bounce <= 1 else (100 - p_bounce)
 
-# web / app split (for the All view)
 web_rows = df_all[df_all["source"] == "web"] if "source" in df_all.columns else df_all.iloc[0:0]
 app_rows = df_all[df_all["source"] == "app"] if "source" in df_all.columns else df_all.iloc[0:0]
 
@@ -356,20 +371,32 @@ def split_of(col, fmt=fmt_number):
     return (fmt(tot(web_rows, col)), fmt(tot(app_rows, col))) if scope == "both" else None
 
 
-# daily series
 daily = pd.DataFrame()
 if "date" in df.columns:
     dd = df.copy()
     dd["date"] = pd.to_datetime(dd["date"], errors="coerce")
-    agg = {c: "sum" for c in ["sessions", "active_users", "purchase_revenue", "transactions",
-                              "add_to_carts", "checkouts", "items_viewed"] if c in dd.columns}
+    agg = {c: "sum" for c in FUNNEL_METRICS if c in dd.columns}
     daily = dd.dropna(subset=["date"]).groupby("date", as_index=False).agg(agg).sort_values("date")
-    if "transactions" in daily.columns and "sessions" in daily.columns:
-        daily["cvr"] = (daily["transactions"] / daily["sessions"] * 100).replace([float("inf")], 0).fillna(0)
+    if {"transactions", "sessions"} <= set(daily.columns):
+        daily["cvr"] = (daily["transactions"] / daily["sessions"] * 100).replace([np.inf], 0).fillna(0)
+        daily["rps"] = (daily["purchase_revenue"] / daily["sessions"]).replace([np.inf], 0).fillna(0)
 
 
 def dser(col):
     return daily[col].tolist() if (not daily.empty and col in daily.columns) else []
+
+
+# shared breakdowns (cached; sliced client-side by scope)
+def get_seg(dim, metrics=None, timeout=75):
+    try:
+        return apply_scope(load_dim(str(d_from), str(d_to), [dim], metrics, timeout))
+    except Exception:
+        return pd.DataFrame()
+
+
+seg_channel = segment_stats(get_seg("session_default_channel_group"), "session_default_channel_group")
+seg_device = segment_stats(get_seg("devicecategory"), "devicecategory")
+seg_visitor = segment_stats(get_seg("new_vs_returning"), "new_vs_returning")
 
 
 # ══════════════════════════════════════════════════════════
@@ -380,8 +407,8 @@ st.markdown(f"""
   <div class="brand">
     <div class="brand-logo">📊</div>
     <div>
-      <div class="brand-t">Google Analytics 4 — Command Center <span class="live-dot">● Live</span></div>
-      <div class="brand-s">Customer behavior intelligence & site/app performance</div>
+      <div class="brand-t">GA4 — Decision Intelligence <span class="live-dot">● Live</span></div>
+      <div class="brand-s">Customer behaviour & revenue intelligence · Web + App</div>
     </div>
   </div>
   <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
@@ -394,278 +421,371 @@ st.markdown(f"""
 
 
 # ══════════════════════════════════════════════════════════
-#  AI EXECUTIVE SUMMARY
+#  DECISION BAR — problems, quantified in EGP
 # ══════════════════════════════════════════════════════════
+def build_decisions():
+    out = []
+
+    # 1) worst-converting segments vs the site benchmark
+    for seg_df, dim, label in [(seg_device, "devicecategory", "جهاز"),
+                               (seg_channel, "session_default_channel_group", "قناة"),
+                               (seg_visitor, "new_vs_returning", "زائر")]:
+        if seg_df.empty:
+            continue
+        cand = seg_df[seg_df["sessions"] >= seg_df["sessions"].sum() * 0.05]
+        for _, r in cand.iterrows():
+            gain = opportunity(r["sessions"], r["cvr"], BM_CVR, r["aov"] or BM_AOV)
+            if gain > 0:
+                out.append((gain, "red", "🔻",
+                            f'<b>{r[dim]}</b> ({label}) بيحوّل <b>{r["cvr"]:.2f}%</b> مقابل '
+                            f'<b>{BM_CVR:.2f}%</b> متوسط الموقع — لو وصل للمتوسط',
+                            f"+{fmt_currency(gain)}"))
+
+    # 2) biggest funnel leak overall
+    stages = [("Item Views", t_views), ("Add to Cart", t_atc), ("Checkout", t_checkout), ("Purchase", t_trans)]
+    stages = [(n, v) for n, v in stages if v > 0]
+    if len(stages) >= 2:
+        worst, worst_drop, worst_from = None, -1, 0
+        for i in range(1, len(stages)):
+            pn, pv = stages[i-1]; cn, cv = stages[i]
+            drop = 100 - (cv / pv * 100 if pv else 0)
+            if drop > worst_drop:
+                worst_drop, worst, worst_from = drop, f"{pn} → {cn}", pv
+        recovered = worst_from * 0.10 * (t_trans / max(t_checkout, 1)) * BM_AOV if worst_from else 0
+        out.append((recovered, "amber", "🚰",
+                    f'أكبر تسريب في الفانل عند <b>{worst}</b> ({worst_drop:.1f}%) — '
+                    f'تحسينه 10 نقاط يقدّر بـ',
+                    f"+{fmt_currency(recovered)}"))
+
+    # 3) under-invested high-quality channel (high RPS, low traffic share)
+    if not seg_channel.empty and BM_RPS > 0:
+        ch = seg_channel.copy()
+        ch["share"] = ch["sessions"] / ch["sessions"].sum() * 100
+        star = ch[(ch["rps"] > BM_RPS * 1.15) & (ch["share"] < 20)]
+        if not star.empty:
+            r = star.sort_values("rps", ascending=False).iloc[0]
+            out.append((0, "green", "💎",
+                        f'<b>{r["session_default_channel_group"]}</b> أعلى جودة '
+                        f'(<b>{fmt_currency(r["rps"],1)}</b>/جلسة مقابل {fmt_currency(BM_RPS,1)}) '
+                        f'لكن نصيبه <b>{r["share"]:.1f}%</b> فقط من الترافيك — فرصة توسّع',
+                        f'RPS {r["rps"]/BM_RPS*100:.0f}'))
+
+    # 4) web vs app economics
+    if scope == "both" and not web_rows.empty and not app_rows.empty:
+        w_s, a_s = tot(web_rows, "sessions"), tot(app_rows, "sessions")
+        w_c = (tot(web_rows, "transactions") / w_s * 100) if w_s else 0
+        a_c = (tot(app_rows, "transactions") / a_s * 100) if a_s else 0
+        w_aov = (tot(web_rows, "purchase_revenue") / max(tot(web_rows, "transactions"), 1))
+        a_aov = (tot(app_rows, "purchase_revenue") / max(tot(app_rows, "transactions"), 1))
+        if a_c < w_c:
+            gain = opportunity(a_s, a_c, w_c, a_aov or BM_AOV)
+            out.append((gain, "red", "📱",
+                        f'<b>التطبيق</b> بيحوّل <b>{a_c:.2f}%</b> مقابل <b>{w_c:.2f}%</b> للويب — '
+                        f'لو ساوى الويب', f"+{fmt_currency(gain)}"))
+        elif w_c < a_c:
+            gain = opportunity(w_s, w_c, a_c, w_aov or BM_AOV)
+            out.append((gain, "red", "🌐",
+                        f'<b>الويب</b> بيحوّل <b>{w_c:.2f}%</b> مقابل <b>{a_c:.2f}%</b> للتطبيق — '
+                        f'لو ساوى التطبيق', f"+{fmt_currency(gain)}"))
+
+    # 5) traffic / revenue trend
+    d_rev = pct_change(t_revenue, p_revenue)
+    out.append((0, "blue" if d_rev >= 0 else "amber", "📈" if d_rev >= 0 else "📉",
+                f'الإيراد <b>{fmt_currency(t_revenue)}</b> ({d_rev:+.1f}%) من '
+                f'<b>{fmt_number(t_trans)}</b> عملية · AOV {fmt_currency(BM_AOV,0)} · '
+                f'RPS {fmt_currency(BM_RPS,1)}', f"{d_rev:+.1f}%"))
+
+    out.sort(key=lambda x: -x[0])
+    return out[:5]
+
+
 st.markdown('<div class="card">', unsafe_allow_html=True)
-st.markdown('<div class="card-t">✨ AI Executive Summary</div>', unsafe_allow_html=True)
-
-_ins = []
-d_sess = pct_change(t_sessions, p_sessions)
-_ins.append(("📈" if d_sess >= 0 else "📉",
-             f'Traffic {"increased" if d_sess>=0 else "decreased"} by <b>{abs(d_sess):.1f}%</b> vs the previous period '
-             f'({fmt_number(t_sessions)} sessions).'))
-d_cvr = pct_change(cvr, p_cvr)
-_ins.append(("🎯" if d_cvr >= 0 else "⚠️",
-             f'Conversion rate is <b>{cvr:.2f}%</b>, {"up" if d_cvr>=0 else "down"} <b>{abs(d_cvr):.1f}%</b>.'))
-d_rev = pct_change(t_revenue, p_revenue)
-_ins.append(("💰", f'Revenue <b>{fmt_currency(t_revenue)}</b> ({d_rev:+.1f}%) from <b>{fmt_number(t_trans)}</b> transactions · AOV {fmt_currency(aov,0)}.'))
-
-# biggest funnel leak
-_stages = [("View Item", t_views), ("Add to Cart", t_atc), ("Checkout", t_checkout), ("Purchase", t_trans)]
-_stages = [(n, v) for n, v in _stages if v > 0]
-if len(_stages) >= 2:
-    worst, worst_drop = None, -1
-    for i in range(1, len(_stages)):
-        pn, pv = _stages[i-1]; cn, cv = _stages[i]
-        drop = 100 - (cv / pv * 100 if pv else 0)
-        if drop > worst_drop:
-            worst_drop, worst = drop, f"{pn} → {cn}"
-    _ins.append(("🔻", f'Biggest funnel leak is <b>{worst}</b> — losing <b>{worst_drop:.1f}%</b> of users at that step.'))
-
-# web vs app (only meaningful in All)
-if scope == "both" and not web_rows.empty and not app_rows.empty:
-    w_cvr = (tot(web_rows,"transactions")/tot(web_rows,"sessions")*100) if tot(web_rows,"sessions") else 0
-    a_cvr = (tot(app_rows,"transactions")/tot(app_rows,"sessions")*100) if tot(app_rows,"sessions") else 0
-    better, worse = ("Web", "App") if w_cvr >= a_cvr else ("App", "Web")
-    _ins.append(("📱", f'<b>{better}</b> converts better ({max(w_cvr,a_cvr):.2f}% vs {min(w_cvr,a_cvr):.2f}%) — review the {worse} experience.'))
-
-_c1, _c2 = st.columns(2)
-for i, (ico, txt) in enumerate(_ins):
-    with (_c1 if i % 2 == 0 else _c2):
-        st.markdown(f'<div class="ai-row"><span class="ai-ico">{ico}</span><span>{txt}</span></div>',
-                    unsafe_allow_html=True)
+st.markdown('<div class="card-t">🎯 Decisions — أهم الفرص مقدّرة بالجنيه</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="card-sub">مرتبة حسب الأثر المالي · المقارنة بمتوسط الموقع '
+            f'(CVR {BM_CVR:.2f}% · RPS {fmt_currency(BM_RPS,1)})</div>', unsafe_allow_html=True)
+for _, kind, ico, txt, val in build_decisions():
+    st.markdown(f'<div class="dec dec-{kind}"><span class="dec-ico">{ico}</span>'
+                f'<span class="dec-txt">{txt}</span><span class="dec-val">{val}</span></div>',
+                unsafe_allow_html=True)
 st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════
-#  KPI GRID
+#  SCORECARD
 # ══════════════════════════════════════════════════════════
 st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 k1, k2, k3, k4, k5, k6 = st.columns(6)
 with k1:
     st.markdown(kpi("👥", "Users", fmt_number(t_users), "", pct_change(t_users, p_users),
-                    dser("active_users"), C["blue"], C["blue_soft"],
-                    split=split_of("active_users")), unsafe_allow_html=True)
+                    dser("active_users"), C["blue"], C["blue_soft"], split=split_of("active_users")),
+                unsafe_allow_html=True)
 with k2:
-    st.markdown(kpi("🔗", "Sessions", fmt_number(t_sessions), "", d_sess,
-                    dser("sessions"), C["indigo"], C["indigo_soft"],
-                    split=split_of("sessions")), unsafe_allow_html=True)
+    st.markdown(kpi("🔗", "Sessions", fmt_number(t_sessions), "", pct_change(t_sessions, p_sessions),
+                    dser("sessions"), C["indigo"], C["indigo_soft"], split=split_of("sessions")),
+                unsafe_allow_html=True)
 with k3:
     st.markdown(kpi("💰", "Revenue", fmt_currency(t_revenue), "", pct_change(t_revenue, p_revenue),
                     dser("purchase_revenue"), C["green"], C["green_soft"],
                     split=split_of("purchase_revenue", fmt_currency)), unsafe_allow_html=True)
 with k4:
-    st.markdown(kpi("🛍", "Transactions", fmt_number(t_trans), "", pct_change(t_trans, p_trans),
-                    dser("transactions"), C["orange"], C["amber_soft"],
-                    sub=f"AOV {fmt_currency(aov,0)}",
-                    split=split_of("transactions")), unsafe_allow_html=True)
+    st.markdown(kpi("🎯", "Conversion Rate", f"{BM_CVR:.2f}", "%", pct_change(BM_CVR, p_cvr),
+                    dser("cvr"), C["purple"], C["purple_soft"],
+                    sub=f"{fmt_number(t_trans)} trans"), unsafe_allow_html=True)
 with k5:
-    st.markdown(kpi("🎯", "Conversion Rate", f"{cvr:.2f}", "%", d_cvr, dser("cvr"),
-                    C["purple"], C["purple_soft"], sub="Trans ÷ Sessions"), unsafe_allow_html=True)
+    st.markdown(kpi("💵", "Revenue / Session", fmt_currency(BM_RPS, 1), "",
+                    pct_change(BM_RPS, (p_revenue/p_sessions) if p_sessions else 0), dser("rps"),
+                    C["teal"], C["teal_soft"], sub="جودة الترافيك"), unsafe_allow_html=True)
 with k6:
-    st.markdown(kpi("💚", "Engagement Rate", f"{engagement:.1f}", "%",
-                    pct_change(engagement, p_engagement), None, C["teal"], C["teal_soft"],
-                    sub=f"Avg {t_dur:.0f}s / session"), unsafe_allow_html=True)
-
-
-# ══════════════════════════════════════════════════════════
-#  CUSTOMER JOURNEY FUNNEL
-# ══════════════════════════════════════════════════════════
-st.markdown(sec("🔻 Customer Journey", "من الزيارة للشراء — نسبة التسريب في كل خطوة"), unsafe_allow_html=True)
-st.markdown('<div class="card">', unsafe_allow_html=True)
-
-steps = [
-    ("👥", "Users", t_users, C["blue"], C["blue_soft"]),
-    ("👁", "View Item", t_views, C["indigo"], C["indigo_soft"]),
-    ("🛒", "Add to Cart", t_atc, C["amber"], C["amber_soft"]),
-    ("💳", "Begin Checkout", t_checkout, C["orange"], "#FFEDD5"),
-    ("✅", "Purchase", t_trans, C["green"], C["green_soft"]),
-]
-steps = [s for s in steps if s[2] > 0]
-
-if len(steps) >= 2:
-    top = steps[0][2]
-    cols = st.columns(len(steps) * 2 - 1)
-    for i, (ico, label, val, col, soft) in enumerate(steps):
-        with cols[i * 2]:
-            share = (val / top * 100) if top else 0
-            st.markdown(
-                f'<div class="fn-step">'
-                f'<div class="fn-circle" style="background:{soft};color:{col}">{ico}</div>'
-                f'<div class="fn-label">{label}</div>'
-                f'<div class="fn-value">{fmt_number(val)}</div>'
-                f'<div class="fn-pct">{share:.1f}%</div></div>',
+    st.markdown(kpi("🧾", "AOV", fmt_currency(BM_AOV, 0), "", pct_change(BM_AOV, p_aov), None,
+                    C["orange"], C["amber_soft"], sub=f"Engagement {engagement:.0f}%"),
                 unsafe_allow_html=True)
-        if i < len(steps) - 1:
-            nxt = steps[i + 1][2]
-            conv = (nxt / val * 100) if val else 0
-            drop = 100 - conv
-            dcol, dsoft = ((C["green_dark"], C["green_soft"]) if drop <= 40 else
-                           (C["amber_dark"], C["amber_soft"]) if drop <= 70 else
-                           (C["red_dark"], C["red_soft"]))
-            with cols[i * 2 + 1]:
-                st.markdown(
-                    f'<div style="text-align:center;margin-top:14px;">'
-                    f'<div style="color:{C["ink3"]};font-size:18px;">→</div>'
-                    f'<span class="fn-drop" style="background:{dsoft};color:{dcol}">▼ {drop:.1f}%</span></div>',
-                    unsafe_allow_html=True)
-    overall = (t_trans / t_users * 100) if t_users else 0
-    st.markdown(
-        f'<div style="margin-top:14px;padding-top:12px;border-top:1px solid {C["line"]};'
-        f'display:flex;justify-content:space-between;align-items:center;">'
-        f'<span style="font-size:12.5px;color:{C["ink2"]};font-weight:600;">Overall Conversion (Users → Purchase)</span>'
-        f'<span style="font-size:16px;color:{C["purple"]};font-weight:800;">{overall:.2f}%</span></div>',
-        unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════
+#  MONEY MAP — segment quality matrix
+# ══════════════════════════════════════════════════════════
+st.markdown(sec("🗺️ Money Map", "جودة كل شريحة مقارنة بمتوسط الموقع (Index 100 = المتوسط)"),
+            unsafe_allow_html=True)
+
+
+def money_table(seg_df, dim, title, top=8):
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.markdown(f'<div class="card-t">{title}</div>', unsafe_allow_html=True)
+    if seg_df.empty:
+        st.info("مفيش بيانات.")
+    else:
+        tot_sess = seg_df["sessions"].sum()
+        rows = []
+        for _, r in seg_df.head(top).iterrows():
+            share = r["sessions"] / tot_sess * 100 if tot_sess else 0
+            idx = (r["rps"] / BM_RPS * 100) if BM_RPS else 0
+            gain = opportunity(r["sessions"], r["cvr"], BM_CVR, r["aov"] or BM_AOV)
+            gain_html = (f'<span style="color:{C["red"]};font-weight:700">+{fmt_currency(gain)}</span>'
+                         if gain > 0 else f'<span style="color:{C["ink3"]}">—</span>')
+            rows.append(f"<tr><td style='font-weight:600'>{r[dim]}</td>"
+                        f"<td>{fmt_number(r['sessions'])}<br>"
+                        f"<span style='font-size:10px;color:{C['ink3']}'>{share:.1f}%</span></td>"
+                        f"<td>{r['cvr']:.2f}%</td>"
+                        f"<td><b>{fmt_currency(r['rps'],1)}</b></td>"
+                        f"<td>{fmt_currency(r['purchase_revenue'])}</td>"
+                        f"<td>{idx_pill(idx)}</td><td>{gain_html}</td></tr>")
+        st.markdown("<table class='styled-table'><thead><tr><th>Segment</th><th>Sessions</th>"
+                    "<th>CVR</th><th>RPS</th><th>Revenue</th><th>Index</th><th>فرصة</th></tr></thead>"
+                    f"<tbody>{''.join(rows)}</tbody></table>", unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+mm1, mm2 = st.columns(2)
+with mm1:
+    money_table(seg_channel, "session_default_channel_group", "حسب القناة")
+with mm2:
+    money_table(seg_device, "devicecategory", "حسب الجهاز")
+st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+money_table(seg_visitor, "new_vs_returning", "جديد مقابل عائد")
+
+
+# ══════════════════════════════════════════════════════════
+#  SEGMENTED FUNNEL EXPLORER
+# ══════════════════════════════════════════════════════════
+st.markdown(sec("🔻 Funnel Explorer", "فين بالظبط بتخسر كل شريحة"), unsafe_allow_html=True)
+
+DIMS = {"📡 القناة": ("session_default_channel_group", seg_channel),
+        "📱 الجهاز": ("devicecategory", seg_device),
+        "🔁 جديد / عائد": ("new_vs_returning", seg_visitor)}
+if scope == "both":
+    DIMS["🌐 ويب / تطبيق"] = ("source", segment_stats(df_all.assign(source=df_all["source"]), "source"))
+
+dim_label = st.radio("قطّع حسب", list(DIMS.keys()), horizontal=True,
+                     key="ga4_funnel_dim", label_visibility="collapsed")
+dim_col, dim_df = DIMS[dim_label]
+
+st.markdown('<div class="card">', unsafe_allow_html=True)
+if dim_df.empty:
+    st.info("مفيش بيانات للبُعد ده.")
 else:
-    st.info("مفيش بيانات كافية لرسم رحلة العميل.")
+    show = dim_df.head(4)
+    fcols = st.columns(len(show))
+    step_colors = [C["blue"], C["indigo"], C["amber"], C["orange"], C["green"]]
+    for col_st, (_, r) in zip(fcols, show.iterrows()):
+        with col_st:
+            steps = funnel_steps(r)
+            if not steps:
+                continue
+            top_v = steps[0][1]
+            html = f'<div class="mf-name">{r[dim_col]}</div>'
+            for i, (lbl, val) in enumerate(steps):
+                w = (val / top_v * 100) if top_v else 0
+                html += (f'<div class="mf-step"><span class="mf-lbl">{lbl}</span>'
+                         f'<div class="mf-track"><div class="mf-fill" '
+                         f'style="width:{max(w,1.5)}%;background:{step_colors[i%len(step_colors)]}"></div></div>'
+                         f'<span class="mf-val">{fmt_number(val)}</span></div>')
+                if i < len(steps) - 1:
+                    nxt = steps[i+1][1]
+                    drop = 100 - (nxt / val * 100 if val else 0)
+                    dc = C["green_dark"] if drop <= 40 else (C["amber_dark"] if drop <= 75 else C["red_dark"])
+                    html += (f'<div style="text-align:right;font-size:10px;color:{dc};'
+                             f'font-weight:700;margin:-2px 0 4px;">▼ {drop:.1f}%</div>')
+            end_cvr = (steps[-1][1] / top_v * 100) if top_v else 0
+            ecol = C["green"] if end_cvr >= BM_CVR else C["red"]
+            html += (f'<div style="margin-top:8px;padding-top:8px;border-top:1px solid {C["line"]};'
+                     f'display:flex;justify-content:space-between;font-size:11.5px;">'
+                     f'<span style="color:{C["ink3"]}">CVR</span>'
+                     f'<b style="color:{ecol}">{end_cvr:.2f}%</b></div>')
+            st.markdown(html, unsafe_allow_html=True)
 st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════
-#  ROW — REVENUE vs USERS  +  TRAFFIC SOURCES
+#  OPPORTUNITY ENGINE
 # ══════════════════════════════════════════════════════════
-st.markdown(sec("📈 Trends & Acquisition"), unsafe_allow_html=True)
-r1l, r1r = st.columns([1.5, 1])
+st.markdown(sec("💡 Opportunity Engine", "لو كل شريحة وصلت لمتوسط الموقع"), unsafe_allow_html=True)
 
-with r1l:
+opps = []
+for seg_df, dcol, dname in [(seg_channel, "session_default_channel_group", "قناة"),
+                            (seg_device, "devicecategory", "جهاز"),
+                            (seg_visitor, "new_vs_returning", "زائر")]:
+    if seg_df.empty:
+        continue
+    for _, r in seg_df.iterrows():
+        if r["sessions"] < seg_df["sessions"].sum() * 0.02:
+            continue
+        gain = opportunity(r["sessions"], r["cvr"], BM_CVR, r["aov"] or BM_AOV)
+        if gain > 0:
+            opps.append({"seg": f"{r[dcol]}", "type": dname, "sessions": r["sessions"],
+                         "cvr": r["cvr"], "gap": BM_CVR - r["cvr"], "gain": gain})
+
+st.markdown('<div class="card">', unsafe_allow_html=True)
+if not opps:
+    st.markdown(f'<div style="color:{C["green_dark"]};font-size:13px;font-weight:600;">'
+                f'✅ كل الشرائح فوق أو عند متوسط الموقع.</div>', unsafe_allow_html=True)
+else:
+    opps.sort(key=lambda x: -x["gain"])
+    total_gain = sum(o["gain"] for o in opps)
+    st.markdown(f'<div class="card-sub">إجمالي الفرص المقدّرة: '
+                f'<b style="color:{C["green_dark"]};font-size:14px;">{fmt_currency(total_gain)}</b> '
+                f'({total_gain/t_revenue*100:.1f}% من الإيراد الحالي)</div>', unsafe_allow_html=True)
+    mx = opps[0]["gain"]
+    rows = ""
+    for o in opps[:10]:
+        w = o["gain"] / mx * 100 if mx else 0
+        rows += (f'<div class="bar-row" style="margin-bottom:11px;">'
+                 f'<div style="min-width:190px;">'
+                 f'<div style="font-size:12.5px;font-weight:700;color:{C["ink"]}">{o["seg"]}</div>'
+                 f'<div style="font-size:10.5px;color:{C["ink3"]}">{o["type"]} · '
+                 f'{fmt_number(o["sessions"])} جلسة · CVR {o["cvr"]:.2f}% '
+                 f'(فجوة {o["gap"]:.2f} نقطة)</div></div>'
+                 f'<div style="flex:1;height:11px;background:{C["line"]};border-radius:100px;overflow:hidden;">'
+                 f'<div style="width:{max(w,2)}%;height:100%;background:{C["green"]};border-radius:100px;"></div></div>'
+                 f'<div style="min-width:96px;text-align:right;font-weight:800;color:{C["green_dark"]};'
+                 f'font-size:13px;">+{fmt_currency(o["gain"])}</div></div>')
+    st.markdown(rows, unsafe_allow_html=True)
+    st.markdown(f'<div style="font-size:11px;color:{C["ink3"]};margin-top:6px;">'
+                f'الحساب: (جلسات الشريحة × فجوة التحويل) × متوسط قيمة الطلب للشريحة. '
+                f'تقدير تقريبي للترتيب بالأولوية، مش وعد بإيراد.</div>', unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════
+#  TRENDS
+# ══════════════════════════════════════════════════════════
+st.markdown(sec("📈 Trends"), unsafe_allow_html=True)
+tr1, tr2 = st.columns([1.5, 1])
+with tr1:
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown('<div class="card-t">Revenue vs Users</div>', unsafe_allow_html=True)
+    st.markdown('<div class="card-t">Revenue vs Sessions · مع خط جودة الترافيك (RPS)</div>',
+                unsafe_allow_html=True)
     if not daily.empty:
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=daily["date"], y=daily["active_users"], name="Users",
-                                 mode="lines+markers", line=dict(color=C["blue"], width=2.5),
-                                 marker=dict(size=4), hovertemplate="Users: %{y:,.0f}<extra></extra>"))
+        fig.add_trace(go.Bar(x=daily["date"], y=daily["sessions"], name="Sessions",
+                             marker_color="rgba(46,144,250,.28)",
+                             hovertemplate="Sessions: %{y:,.0f}<extra></extra>"))
         fig.add_trace(go.Scatter(x=daily["date"], y=daily["purchase_revenue"], name="Revenue",
-                                 mode="lines+markers", line=dict(color=C["green"], width=2.5),
-                                 marker=dict(size=4), yaxis="y2",
+                                 mode="lines", line=dict(color=C["green"], width=3), yaxis="y2",
                                  hovertemplate="Revenue: %{y:,.0f}<extra></extra>"))
         _p = {k: v for k, v in PLOT.items() if k != "yaxis"}
-        fig.update_layout(**_p, height=320, hovermode="x unified",
-                          yaxis=dict(title="Users", gridcolor=C["line"], zeroline=False),
+        fig.update_layout(**_p, height=310, hovermode="x unified",
+                          yaxis=dict(title="Sessions", gridcolor=C["line"], zeroline=False),
                           yaxis2=dict(title="Revenue", overlaying="y", side="right", showgrid=False))
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
     st.markdown('</div>', unsafe_allow_html=True)
-
-with r1r:
+with tr2:
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown('<div class="card-t">Traffic Sources</div>', unsafe_allow_html=True)
-    try:
-        df_ch = apply_scope(load_dim(str(d_from), str(d_to), ["session_default_channel_group"],
-                                     ["sessions", "purchase_revenue", "transactions"]))
-        g = df_ch.groupby("session_default_channel_group", as_index=False).agg(
-            {"sessions": "sum", "purchase_revenue": "sum", "transactions": "sum"})
-        g = g[g["sessions"] > 0].sort_values("sessions", ascending=False)
-        palette = [C["blue"], C["green"], C["purple"], C["amber"], C["pink"], C["teal"], C["orange"], C["ink3"]]
-        fig = go.Figure(go.Pie(labels=g["session_default_channel_group"], values=g["sessions"], hole=0.66,
-                               marker=dict(colors=palette[:len(g)], line=dict(color="#fff", width=2)),
-                               textinfo="none", sort=False,
-                               hovertemplate="%{label}<br>%{value:,.0f} (%{percent})<extra></extra>"))
-        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", showlegend=False, height=180,
-                          margin=dict(l=0, r=0, t=0, b=0),
-                          annotations=[dict(text=f"<b>{fmt_number(g['sessions'].sum())}</b><br>"
-                                                 f"<span style='font-size:9px;color:{C['ink3']}'>Sessions</span>",
-                                            x=0.5, y=0.5, font_size=14, showarrow=False, font_color=C["ink"])])
+    st.markdown('<div class="card-t">Conversion Rate — يومي مقابل المتوسط</div>', unsafe_allow_html=True)
+    if not daily.empty and "cvr" in daily.columns:
+        colors = [C["green"] if v >= BM_CVR else C["red"] for v in daily["cvr"]]
+        fig = go.Figure(go.Bar(x=daily["date"], y=daily["cvr"], marker_color=colors,
+                               hovertemplate="CVR: %{y:.2f}%<extra></extra>"))
+        fig.add_hline(y=BM_CVR, line_dash="dash", line_color=C["ink3"],
+                      annotation_text=f"متوسط {BM_CVR:.2f}%", annotation_position="top left")
+        fig.update_layout(**PLOT, height=310)
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-        tot_s = g["sessions"].sum()
-        leg = ""
-        for i, (_, r) in enumerate(g.head(8).iterrows()):
-            p = r["sessions"] / tot_s * 100 if tot_s else 0
-            leg += (f'<div class="legend-row"><span class="legend-dot" style="background:{palette[i%len(palette)]}"></span>'
-                    f'<span class="legend-name">{r["session_default_channel_group"]}</span>'
-                    f'<span class="legend-pct">{p:.1f}%</span>'
-                    f'<span class="legend-val">{fmt_currency(r["purchase_revenue"])}</span></div>')
-        st.markdown(leg, unsafe_allow_html=True)
-    except Exception as e:
-        st.info("مفيش بيانات قنوات في الفترة دي.")
     st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════
-#  ROW — DEVICES  +  NEW vs RETURNING  +  LANDING PAGES
+#  PRODUCT INTELLIGENCE — diagnose merchandising vs checkout
 # ══════════════════════════════════════════════════════════
-st.markdown(sec("👥 Audience & Behaviour"), unsafe_allow_html=True)
-r2a, r2b, r2c = st.columns([1, 1, 1.6])
+st.markdown(sec("🛍 Product Intelligence", "View→Cart يشخّص العرض · Cart→Buy يشخّص السعر/الشيك أوت"),
+            unsafe_allow_html=True)
+st.markdown('<div class="card">', unsafe_allow_html=True)
+try:
+    df_cat = get_seg("item_category", ["item_revenue", "items_purchased", "items_viewed",
+                                       "items_added_to_cart", "item_price"], timeout=90)
+    g = df_cat.groupby("item_category", as_index=False).agg(
+        {"item_revenue": "sum", "items_purchased": "sum",
+         "items_viewed": "sum", "items_added_to_cart": "sum", "item_price": "mean"})
+    g["item_category"] = g["item_category"].astype(str)
+    g = g[(g["item_revenue"] > 0) & (~g["item_category"].str.lower().isin(["(not set)", "nan", "none", ""]))]
+    if g.empty:
+        st.info("مفيش بيانات فئات.")
+    else:
+        g["v2c"] = (g["items_added_to_cart"] / g["items_viewed"] * 100).replace([np.inf], 0).fillna(0)
+        g["c2p"] = (g["items_purchased"] / g["items_added_to_cart"] * 100).replace([np.inf], 0).fillna(0)
+        avg_v2c, avg_c2p = g["v2c"].mean(), g["c2p"].mean()
+        g = g.sort_values("item_revenue", ascending=False)
+        rows = []
+        for _, r in g.head(14).iterrows():
+            # diagnosis: which stage is the weak one relative to the catalogue average
+            if r["v2c"] < avg_v2c * 0.75:
+                diag, dcls = "عرض / سعر معروض", "badge-amber"
+            elif r["c2p"] < avg_c2p * 0.75:
+                diag, dcls = "شحن / دفع / توفر", "badge-red"
+            else:
+                diag, dcls = "صحية", "badge-green"
+            rows.append(f"<tr><td style='font-weight:600'>{r['item_category']}</td>"
+                        f"<td>{fmt_currency(r['item_revenue'])}</td>"
+                        f"<td>{fmt_number(r['items_viewed'])}</td>"
+                        f"<td>{r['v2c']:.1f}%</td><td>{r['c2p']:.1f}%</td>"
+                        f"<td>{fmt_number(r['items_purchased'])}</td>"
+                        f"<td>{fmt_currency(r['item_price'],0)}</td>"
+                        f"<td><span class='badge {dcls}'>{diag}</span></td></tr>")
+        st.markdown(f'<div class="card-sub">متوسط الكتالوج: View→Cart {avg_v2c:.1f}% · '
+                    f'Cart→Buy {avg_c2p:.1f}% — التشخيص مقارنة بالمتوسط</div>', unsafe_allow_html=True)
+        st.markdown("<table class='styled-table'><thead><tr><th>Category</th><th>Revenue</th><th>Views</th>"
+                    "<th>View→Cart</th><th>Cart→Buy</th><th>Sold</th><th>Avg Price</th>"
+                    "<th>التشخيص</th></tr></thead>"
+                    f"<tbody>{''.join(rows)}</tbody></table>", unsafe_allow_html=True)
+except Exception:
+    st.info("مفيش بيانات فئات.")
+st.markdown('</div>', unsafe_allow_html=True)
 
-with r2a:
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown('<div class="card-t">Device Category</div>', unsafe_allow_html=True)
-    try:
-        df_dev = apply_scope(load_dim(str(d_from), str(d_to), ["devicecategory"],
-                                      ["sessions", "purchase_revenue", "transactions"]))
-        g = df_dev.groupby("devicecategory", as_index=False).agg(
-            {"sessions": "sum", "purchase_revenue": "sum", "transactions": "sum"})
-        g = g[g["sessions"] > 0].sort_values("sessions", ascending=False)
-        dcolors = {"mobile": C["blue"], "desktop": C["green"], "tablet": C["purple"], "smart tv": C["amber"]}
-        cols_d = [dcolors.get(str(x).lower(), C["ink3"]) for x in g["devicecategory"]]
-        fig = go.Figure(go.Pie(labels=g["devicecategory"], values=g["sessions"], hole=0.66,
-                               marker=dict(colors=cols_d, line=dict(color="#fff", width=2)),
-                               textinfo="none", sort=False,
-                               hovertemplate="%{label}<br>%{value:,.0f} (%{percent})<extra></extra>"))
-        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", showlegend=False, height=165,
-                          margin=dict(l=0, r=0, t=0, b=0),
-                          annotations=[dict(text=f"<b>{fmt_number(g['sessions'].sum())}</b>", x=0.5, y=0.5,
-                                            font_size=15, showarrow=False, font_color=C["ink"])])
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-        ts = g["sessions"].sum()
-        leg = ""
-        for i, (_, r) in enumerate(g.iterrows()):
-            p = r["sessions"] / ts * 100 if ts else 0
-            cvr_d = (r["transactions"] / r["sessions"] * 100) if r["sessions"] else 0
-            leg += (f'<div class="legend-row"><span class="legend-dot" style="background:{cols_d[i]}"></span>'
-                    f'<span class="legend-name">{r["devicecategory"]}</span>'
-                    f'<span class="legend-pct">{p:.1f}%</span>'
-                    f'<span class="legend-val">CVR {cvr_d:.2f}%</span></div>')
-        st.markdown(leg, unsafe_allow_html=True)
-    except Exception:
-        st.info("مفيش بيانات أجهزة.")
-    st.markdown('</div>', unsafe_allow_html=True)
 
-with r2b:
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown('<div class="card-t">New vs Returning</div>', unsafe_allow_html=True)
-    try:
-        df_nr = apply_scope(load_dim(str(d_from), str(d_to), ["new_vs_returning"],
-                                     ["sessions", "purchase_revenue", "transactions"]))
-        g = df_nr.groupby("new_vs_returning", as_index=False).agg(
-            {"sessions": "sum", "purchase_revenue": "sum", "transactions": "sum"})
-        g = g[g["sessions"] > 0].sort_values("sessions", ascending=False)
-        ncolors = {"new": C["teal"], "returning": C["purple"]}
-        cols_n = [ncolors.get(str(x).lower(), C["ink3"]) for x in g["new_vs_returning"]]
-        fig = go.Figure(go.Pie(labels=g["new_vs_returning"], values=g["sessions"], hole=0.66,
-                               marker=dict(colors=cols_n, line=dict(color="#fff", width=2)),
-                               textinfo="none", sort=False,
-                               hovertemplate="%{label}<br>%{value:,.0f} (%{percent})<extra></extra>"))
-        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", showlegend=False, height=165,
-                          margin=dict(l=0, r=0, t=0, b=0),
-                          annotations=[dict(text=f"<b>{fmt_number(g['sessions'].sum())}</b>", x=0.5, y=0.5,
-                                            font_size=15, showarrow=False, font_color=C["ink"])])
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-        ts = g["sessions"].sum()
-        leg = ""
-        for i, (_, r) in enumerate(g.iterrows()):
-            p = r["sessions"] / ts * 100 if ts else 0
-            cvr_n = (r["transactions"] / r["sessions"] * 100) if r["sessions"] else 0
-            leg += (f'<div class="legend-row"><span class="legend-dot" style="background:{cols_n[i]}"></span>'
-                    f'<span class="legend-name">{r["new_vs_returning"]}</span>'
-                    f'<span class="legend-pct">{p:.1f}%</span>'
-                    f'<span class="legend-val">CVR {cvr_n:.2f}%</span></div>')
-        st.markdown(leg, unsafe_allow_html=True)
-    except Exception:
-        st.info("مفيش بيانات New/Returning.")
-    st.markdown('</div>', unsafe_allow_html=True)
+# ══════════════════════════════════════════════════════════
+#  LANDING PAGE QUALITY  +  WEB vs APP ECONOMICS
+# ══════════════════════════════════════════════════════════
+st.markdown(sec("🚪 Entry Quality & Platform Economics"), unsafe_allow_html=True)
+lp_l, lp_r = st.columns([1.4, 1])
 
-with r2c:
+with lp_l:
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown('<div class="card-t">Top Landing Pages</div>', unsafe_allow_html=True)
+    st.markdown('<div class="card-t">Landing Pages — ترافيك عالي + تحويل منخفض = نزيف</div>',
+                unsafe_allow_html=True)
     try:
-        # page_path is high-cardinality: try the rich call, fall back to sessions only
-        df_pp = load_dim(str(d_from), str(d_to), ["page_path"],
-                         ["sessions", "purchase_revenue", "transactions"], timeout=75)
+        df_pp = get_seg("page_path", ["sessions", "purchase_revenue", "transactions"], timeout=90)
         rich = not df_pp.empty and "purchase_revenue" in df_pp.columns
         if df_pp.empty:
-            df_pp = load_dim(str(d_from), str(d_to), ["page_path"], ["sessions"], timeout=75)
+            df_pp = get_seg("page_path", ["sessions"], timeout=90)
             rich = False
-        df_pp = apply_scope(df_pp)
         agg = {"sessions": "sum"}
         if rich:
             agg.update({"purchase_revenue": "sum", "transactions": "sum"})
@@ -673,112 +793,147 @@ with r2c:
         g = g[g["sessions"] > 0].sort_values("sessions", ascending=False)
         rows = []
         for _, r in g.head(12).iterrows():
-            path = str(r["page_path"])
-            short = (path[:46] + "…") if len(path) > 48 else path
+            path = str(r["page_path"]); short = (path[:42] + "…") if len(path) > 44 else path
             if rich:
                 cvr_p = (r["transactions"] / r["sessions"] * 100) if r["sessions"] else 0
+                rps_p = (r["purchase_revenue"] / r["sessions"]) if r["sessions"] else 0
+                idx = (rps_p / BM_RPS * 100) if BM_RPS else 0
+                flag = ('<span class="badge badge-red">نزيف</span>'
+                        if (idx < 60 and r["sessions"] > g["sessions"].median()) else "")
                 rows.append(f"<tr><td style='font-weight:600' title='{path}'>{short}</td>"
-                            f"<td>{fmt_number(r['sessions'])}</td>"
-                            f"<td>{fmt_currency(r['purchase_revenue'])}</td>"
-                            f"<td>{cvr_p:.2f}%</td></tr>")
+                            f"<td>{fmt_number(r['sessions'])}</td><td>{cvr_p:.2f}%</td>"
+                            f"<td>{fmt_currency(rps_p,1)}</td><td>{idx_pill(idx)}</td><td>{flag}</td></tr>")
             else:
                 rows.append(f"<tr><td style='font-weight:600' title='{path}'>{short}</td>"
                             f"<td>{fmt_number(r['sessions'])}</td></tr>")
-        head = ("<th>Page</th><th>Sessions</th><th>Revenue</th><th>CVR</th>" if rich
-                else "<th>Page</th><th>Sessions</th>")
+        head = ("<th>Page</th><th>Sessions</th><th>CVR</th><th>RPS</th><th>Index</th><th></th>"
+                if rich else "<th>Page</th><th>Sessions</th>")
         st.markdown(f"<table class='styled-table'><thead><tr>{head}</tr></thead>"
                     f"<tbody>{''.join(rows)}</tbody></table>", unsafe_allow_html=True)
     except Exception:
         st.info("مفيش بيانات صفحات.")
     st.markdown('</div>', unsafe_allow_html=True)
 
-
-# ══════════════════════════════════════════════════════════
-#  ROW — CATEGORY PERFORMANCE
-# ══════════════════════════════════════════════════════════
-st.markdown(sec("🛍 Product Categories"), unsafe_allow_html=True)
-st.markdown('<div class="card">', unsafe_allow_html=True)
-try:
-    df_cat = apply_scope(load_dim(str(d_from), str(d_to), ["item_category"],
-                                  ["item_revenue", "items_purchased", "items_viewed",
-                                   "items_added_to_cart"], timeout=75))
-    g = df_cat.groupby("item_category", as_index=False).agg(
-        {"item_revenue": "sum", "items_purchased": "sum",
-         "items_viewed": "sum", "items_added_to_cart": "sum"})
-    g = g[g["item_revenue"] > 0].sort_values("item_revenue", ascending=False)
-    if g.empty:
-        st.info("مفيش بيانات فئات.")
+with lp_r:
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.markdown('<div class="card-t">Web vs App — اقتصاديات المنصتين</div>', unsafe_allow_html=True)
+    if web_rows.empty or app_rows.empty:
+        st.info("محتاج بيانات المنصتين للمقارنة.")
     else:
-        rows = []
-        for _, r in g.head(12).iterrows():
-            v2c = (r["items_added_to_cart"] / r["items_viewed"] * 100) if r["items_viewed"] else 0
-            c2p = (r["items_purchased"] / r["items_added_to_cart"] * 100) if r["items_added_to_cart"] else 0
-            badge = ('<span class="badge badge-green">قوي</span>' if c2p >= 30 else
-                     '<span class="badge badge-amber">متوسط</span>' if c2p >= 10 else
-                     '<span class="badge badge-red">ضعيف</span>')
-            rows.append(f"<tr><td style='font-weight:600'>{r['item_category']}</td>"
-                        f"<td>{fmt_currency(r['item_revenue'])}</td>"
-                        f"<td>{fmt_number(r['items_viewed'])}</td>"
-                        f"<td>{fmt_number(r['items_added_to_cart'])}</td>"
-                        f"<td>{fmt_number(r['items_purchased'])}</td>"
-                        f"<td>{v2c:.1f}%</td><td>{c2p:.1f}%</td><td>{badge}</td></tr>")
-        st.markdown(
-            "<table class='styled-table'><thead><tr><th>Category</th><th>Revenue</th><th>Viewed</th>"
-            "<th>Added to Cart</th><th>Purchased</th><th>View→Cart</th><th>Cart→Buy</th><th></th></tr></thead>"
-            f"<tbody>{''.join(rows)}</tbody></table>", unsafe_allow_html=True)
-except Exception:
-    st.info("مفيش بيانات فئات.")
-st.markdown('</div>', unsafe_allow_html=True)
+        def econ(rows_):
+            s = tot(rows_, "sessions"); tr = tot(rows_, "transactions"); rv = tot(rows_, "purchase_revenue")
+            return {"sessions": s, "cvr": (tr/s*100) if s else 0, "rps": (rv/s) if s else 0,
+                    "aov": (rv/tr) if tr else 0, "revenue": rv}
+        W, A = econ(web_rows), econ(app_rows)
+        for label, key, fmt in [("Sessions", "sessions", fmt_number), ("CVR %", "cvr", lambda v: f"{v:.2f}%"),
+                                ("RPS", "rps", lambda v: fmt_currency(v, 1)),
+                                ("AOV", "aov", lambda v: fmt_currency(v, 0)),
+                                ("Revenue", "revenue", fmt_currency)]:
+            wv, av = W[key], A[key]
+            tot_v = (wv + av) or 1
+            wpct = wv / tot_v * 100 if key in ("sessions", "revenue") else (wv / (wv + av) * 100 if (wv+av) else 50)
+            better = C["blue"] if wv >= av else C["purple"]
+            st.markdown(
+                f'<div style="margin-bottom:11px;">'
+                f'<div style="display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:4px;">'
+                f'<span style="color:{C["ink2"]};font-weight:600;">{label}</span>'
+                f'<span><b style="color:{C["blue"]}">{fmt(wv)}</b>'
+                f'<span style="color:{C["ink3"]}"> · </span>'
+                f'<b style="color:{C["purple"]}">{fmt(av)}</b></span></div>'
+                f'<div style="display:flex;height:8px;border-radius:100px;overflow:hidden;">'
+                f'<div style="width:{wpct}%;background:{C["blue"]}"></div>'
+                f'<div style="width:{100-wpct}%;background:{C["purple"]}"></div></div></div>',
+                unsafe_allow_html=True)
+        st.markdown(f'<div style="font-size:11px;color:{C["ink3"]};margin-top:4px;">'
+                    f'<span style="color:{C["blue"]};font-weight:700">■</span> ويب &nbsp;'
+                    f'<span style="color:{C["purple"]};font-weight:700">■</span> تطبيق</div>',
+                    unsafe_allow_html=True)
+        verdict = ("التطبيق أعلى جودة — يستاهل استثمار أكبر"
+                   if A["rps"] > W["rps"] * 1.1 else
+                   "الويب أعلى جودة — راجع تجربة التطبيق"
+                   if W["rps"] > A["rps"] * 1.1 else "المنصتين متقاربتين في الجودة")
+        st.markdown(f'<div style="margin-top:10px;padding:10px 12px;background:{C["bg"]};'
+                    f'border:1px solid {C["line"]};border-radius:11px;font-size:12px;'
+                    f'color:{C["ink2"]};font-weight:600;">💡 {verdict}</div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
+
+# ══════════════════════════════════════════════════════════
+#  ANOMALY RADAR
+# ══════════════════════════════════════════════════════════
+st.markdown(sec("🚨 Anomaly Radar", "آخر يوم مقارنة بمتوسط الفترة ± انحرافين معياريين"),
+            unsafe_allow_html=True)
+st.markdown('<div class="card">', unsafe_allow_html=True)
+if len(daily) < 5:
+    st.info("محتاج 5 أيام على الأقل لكشف الشذوذ.")
+else:
+    checks = [("Sessions", "sessions", False), ("Revenue", "purchase_revenue", False),
+              ("Conversion Rate", "cvr", False), ("Transactions", "transactions", False),
+              ("Add to Cart", "add_to_carts", False)]
+    found = []
+    for label, col, _ in checks:
+        if col not in daily.columns or len(daily[col]) < 5:
+            continue
+        hist = daily[col].iloc[:-1]
+        last = daily[col].iloc[-1]
+        mu, sd = hist.mean(), hist.std()
+        if sd == 0 or pd.isna(sd):
+            continue
+        z = (last - mu) / sd
+        if abs(z) >= 2:
+            direction = "أعلى" if z > 0 else "أقل"
+            kind = "green" if z > 0 else "red"
+            ico = "📈" if z > 0 else "📉"
+            fmt_v = fmt_currency if col == "purchase_revenue" else (
+                (lambda v: f"{v:.2f}%") if col == "cvr" else fmt_number)
+            found.append((abs(z), kind, ico,
+                          f'<b>{label}</b> آخر يوم {direction} من المعتاد بشكل ملحوظ — '
+                          f'{fmt_v(last)} مقابل متوسط {fmt_v(mu)}', f"{z:+.1f}σ"))
+    if not found:
+        st.markdown(f'<div style="color:{C["green_dark"]};font-size:13px;font-weight:600;">'
+                    f'✅ مفيش شذوذ — كل المؤشرات في نطاقها الطبيعي.</div>', unsafe_allow_html=True)
+    else:
+        found.sort(key=lambda x: -x[0])
+        for _, kind, ico, txt, val in found:
+            st.markdown(f'<div class="dec dec-{kind}"><span class="dec-ico">{ico}</span>'
+                        f'<span class="dec-txt">{txt}</span><span class="dec-val">{val}</span></div>',
+                        unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════
 #  CAMPAIGNS  +  PRODUCTS BY CAMPAIGN
 # ══════════════════════════════════════════════════════════
-st.markdown(sec("📣 Campaign Performance", "من GA4 — Meta و Google Ads"), unsafe_allow_html=True)
-
-CAMP_SRC = {"📘 Meta (Facebook/Instagram)": "session_manual_campaign_name",
-            "🔵 Google Ads": "session_google_ads_campaign_name"}
+st.markdown(sec("📣 Campaigns → Products", "أي حملة بتبيع إيه فعلاً"), unsafe_allow_html=True)
+CAMP_SRC = {"📘 Meta": "session_manual_campaign_name", "🔵 Google Ads": "session_google_ads_campaign_name"}
 camp_choice = st.radio("مصدر الحملات", list(CAMP_SRC.keys()), horizontal=True,
                        key="ga4_camp_src", label_visibility="collapsed")
 camp_field = CAMP_SRC[camp_choice]
 
 cmp_l, cmp_r = st.columns([1.3, 1])
-
+camp_list = []
 with cmp_l:
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown('<div class="card-t">Campaigns</div>', unsafe_allow_html=True)
-    camp_list = []
+    st.markdown('<div class="card-t">Campaigns — مرتبة بجودة الترافيك (RPS)</div>', unsafe_allow_html=True)
     try:
-        df_cmp = apply_scope(load_dim(str(d_from), str(d_to), [camp_field],
-                                      ["sessions", "purchase_revenue", "transactions", "add_to_carts"],
-                                      timeout=75))
-        g = df_cmp.groupby(camp_field, as_index=False).agg(
-            {"sessions": "sum", "purchase_revenue": "sum",
-             "transactions": "sum", "add_to_carts": "sum"})
-        g = g[g["sessions"] > 0].sort_values("purchase_revenue", ascending=False)
-        g = g[~g[camp_field].astype(str).str.lower().isin(["(not set)", "nan", "none", ""])]
-        camp_list = g[camp_field].astype(str).tolist()
-        if g.empty:
+        gc = segment_stats(get_seg(camp_field, timeout=90), camp_field)
+        camp_list = gc[camp_field].tolist()
+        if gc.empty:
             st.info("مفيش بيانات حملات.")
         else:
+            gc = gc.sort_values("rps", ascending=False)
             rows = []
-            for _, r in g.head(12).iterrows():
-                nm = str(r[camp_field]); short = (nm[:38] + "…") if len(nm) > 40 else nm
-                cvr_c = (r["transactions"] / r["sessions"] * 100) if r["sessions"] else 0
-                aov_c = (r["purchase_revenue"] / r["transactions"]) if r["transactions"] else 0
-                badge = ('<span class="badge badge-green">قوي</span>' if cvr_c >= 2 else
-                         '<span class="badge badge-amber">متوسط</span>' if cvr_c >= 0.5 else
-                         '<span class="badge badge-red">ضعيف</span>')
+            for _, r in gc.head(12).iterrows():
+                nm = str(r[camp_field]); short = (nm[:34] + "…") if len(nm) > 36 else nm
+                idx = (r["rps"] / BM_RPS * 100) if BM_RPS else 0
                 rows.append(f"<tr><td style='font-weight:600' title='{nm}'>{short}</td>"
-                            f"<td>{fmt_number(r['sessions'])}</td>"
+                            f"<td>{fmt_number(r['sessions'])}</td><td>{r['cvr']:.2f}%</td>"
+                            f"<td><b>{fmt_currency(r['rps'],1)}</b></td>"
                             f"<td>{fmt_currency(r['purchase_revenue'])}</td>"
-                            f"<td>{fmt_number(r['transactions'])}</td>"
-                            f"<td>{cvr_c:.2f}%</td><td>{fmt_currency(aov_c,0)}</td><td>{badge}</td></tr>")
-            st.markdown(
-                "<table class='styled-table'><thead><tr><th>Campaign</th><th>Sessions</th><th>Revenue</th>"
-                "<th>Trans.</th><th>CVR</th><th>AOV</th><th></th></tr></thead>"
-                f"<tbody>{''.join(rows)}</tbody></table>", unsafe_allow_html=True)
+                            f"<td>{idx_pill(idx)}</td></tr>")
+            st.markdown("<table class='styled-table'><thead><tr><th>Campaign</th><th>Sessions</th>"
+                        "<th>CVR</th><th>RPS</th><th>Revenue</th><th>Index</th></tr></thead>"
+                        f"<tbody>{''.join(rows)}</tbody></table>", unsafe_allow_html=True)
     except Exception:
         st.info("مفيش بيانات حملات.")
     st.markdown('</div>', unsafe_allow_html=True)
@@ -791,33 +946,31 @@ with cmp_r:
     else:
         sel_camp = st.selectbox("الكامبين", camp_list, key="ga4_prod_camp")
         try:
+            df_pr = get_seg(camp_field, None, timeout=90)
             df_pr = apply_scope(load_dim(str(d_from), str(d_to), [camp_field, "item_name"],
-                                         ["item_revenue", "items_purchased", "item_price"],
-                                         timeout=90))
+                                         ["item_revenue", "items_purchased"], timeout=95))
             df_pr = df_pr[df_pr[camp_field].astype(str) == sel_camp]
-            g = df_pr.groupby("item_name", as_index=False).agg(
-                {"item_revenue": "sum", "items_purchased": "sum", "item_price": "mean"})
-            g = g[g["item_revenue"] > 0].sort_values("item_revenue", ascending=False)
-            if g.empty:
+            gp = df_pr.groupby("item_name", as_index=False).agg(
+                {"item_revenue": "sum", "items_purchased": "sum"})
+            gp = gp[gp["item_revenue"] > 0].sort_values("item_revenue", ascending=False)
+            if gp.empty:
                 st.info("مفيش منتجات للكامبين ده.")
             else:
-                m1, m2 = st.columns(2)
-                with m1:
-                    st.markdown(f'<div style="font-size:11px;color:{C["ink3"]};font-weight:600;">REVENUE</div>'
-                                f'<div style="font-size:20px;font-weight:800;color:{C["green"]};">'
-                                f'{fmt_currency(g["item_revenue"].sum())}</div>', unsafe_allow_html=True)
-                with m2:
-                    st.markdown(f'<div style="font-size:11px;color:{C["ink3"]};font-weight:600;">PRODUCTS</div>'
-                                f'<div style="font-size:20px;font-weight:800;color:{C["blue"]};">'
-                                f'{fmt_number(len(g))}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="display:flex;gap:18px;margin-bottom:10px;">'
+                            f'<div><div style="font-size:10.5px;color:{C["ink3"]};font-weight:600;">REVENUE</div>'
+                            f'<div style="font-size:19px;font-weight:800;color:{C["green"]};">'
+                            f'{fmt_currency(gp["item_revenue"].sum())}</div></div>'
+                            f'<div><div style="font-size:10.5px;color:{C["ink3"]};font-weight:600;">PRODUCTS</div>'
+                            f'<div style="font-size:19px;font-weight:800;color:{C["blue"]};">'
+                            f'{fmt_number(len(gp))}</div></div></div>', unsafe_allow_html=True)
                 rows = []
-                for _, r in g.head(10).iterrows():
-                    nm = str(r["item_name"]); short = (nm[:34] + "…") if len(nm) > 36 else nm
+                for _, r in gp.head(10).iterrows():
+                    nm = str(r["item_name"]); short = (nm[:32] + "…") if len(nm) > 34 else nm
                     rows.append(f"<tr><td style='font-weight:600' title='{nm}'>{short}</td>"
                                 f"<td>{fmt_currency(r['item_revenue'])}</td>"
                                 f"<td>{fmt_number(r['items_purchased'])}</td></tr>")
-                st.markdown("<table class='styled-table' style='margin-top:10px'><thead><tr><th>Product</th>"
-                            "<th>Revenue</th><th>Qty</th></tr></thead>"
+                st.markdown("<table class='styled-table'><thead><tr><th>Product</th><th>Revenue</th>"
+                            "<th>Qty</th></tr></thead>"
                             f"<tbody>{''.join(rows)}</tbody></table>", unsafe_allow_html=True)
         except Exception:
             st.info("مفيش بيانات منتجات.")
@@ -825,19 +978,18 @@ with cmp_r:
 
 
 # ══════════════════════════════════════════════════════════
-#  DAILY TABLE + EXPORT
+#  DAILY TABLE
 # ══════════════════════════════════════════════════════════
 if not daily.empty:
     st.markdown(sec("📋 Daily Performance"), unsafe_allow_html=True)
     st.markdown('<div class="card">', unsafe_allow_html=True)
     tb = daily.sort_values("date", ascending=False).copy()
     tb["date"] = tb["date"].dt.strftime("%b %d, %Y")
-    tb["aov"] = (tb["purchase_revenue"] / tb["transactions"]).replace([float("inf")], 0).fillna(0)
-    show_cols = [c for c in ["date", "active_users", "sessions", "items_viewed", "add_to_carts",
-                             "checkouts", "transactions", "cvr", "purchase_revenue", "aov"]
+    tb["aov"] = (tb["purchase_revenue"] / tb["transactions"]).replace([np.inf], 0).fillna(0)
+    cols_show = [c for c in ["date", "active_users", "sessions", "items_viewed", "add_to_carts",
+                             "checkouts", "transactions", "cvr", "purchase_revenue", "rps", "aov"]
                  if c in tb.columns]
-    st.dataframe(
-        tb[show_cols], use_container_width=True, height=380, hide_index=True,
+    st.dataframe(tb[cols_show], use_container_width=True, height=380, hide_index=True,
         column_config={
             "date": st.column_config.TextColumn("Date"),
             "active_users": st.column_config.NumberColumn("Users", format="%,d"),
@@ -845,15 +997,15 @@ if not daily.empty:
             "items_viewed": st.column_config.NumberColumn("Item Views", format="%,d"),
             "add_to_carts": st.column_config.NumberColumn("Add to Cart", format="%,d"),
             "checkouts": st.column_config.NumberColumn("Checkouts", format="%,d"),
-            "transactions": st.column_config.NumberColumn("Transactions", format="%,d"),
+            "transactions": st.column_config.NumberColumn("Trans.", format="%,d"),
             "cvr": st.column_config.NumberColumn("CVR", format="%.2f%%"),
             "purchase_revenue": st.column_config.NumberColumn("Revenue", format="%,.0f"),
-            "aov": st.column_config.NumberColumn("AOV", format="%,.0f"),
-        },
-    )
+            "rps": st.column_config.NumberColumn("RPS", format="%.1f"),
+            "aov": st.column_config.NumberColumn("AOV", format="%,.0f")})
     buf = io.BytesIO()
-    tb[show_cols].to_csv(buf, index=False, encoding="utf-8-sig")
+    tb[cols_show].to_csv(buf, index=False, encoding="utf-8-sig")
     st.download_button("📥 Download CSV", buf.getvalue(), "ga4_performance.csv", "text/csv")
     st.markdown('</div>', unsafe_allow_html=True)
 
-st.caption("💡 المصدر: GA4 عبر Windsor.ai — Raneen.com (Web) و Raneen Mobile APP.")
+st.caption("💡 GA4 عبر Windsor.ai — Raneen.com (Web) + Raneen Mobile APP. "
+           "تقديرات الفرص إرشادية للترتيب بالأولوية.")
