@@ -11,7 +11,9 @@ import pandas as pd
 import streamlit as st
 from datetime import date, timedelta
 
-WINDSOR_KEY = "d9457cee421e35fb6dd6f37728604a86b321"
+from config import WINDSOR_API_KEY, require_windsor_key, redact
+
+WINDSOR_KEY = WINDSOR_API_KEY
 WINDSOR_BASE = "https://connectors.windsor.ai/facebook"
 
 
@@ -47,7 +49,7 @@ def get_meta_data(fields, date_preset="last_30d", date_from=None, date_to=None, 
     through instead of converting it to a date range.
     """
     params = {
-        "api_key": WINDSOR_KEY,
+        "api_key": require_windsor_key(),
         "fields": ",".join(fields),
     }
 
@@ -79,10 +81,10 @@ def get_meta_data(fields, date_preset="last_30d", date_from=None, date_to=None, 
         st.session_state.setdefault("_meta_api_errors", []).append(f"{e} | body: {body}")
         return pd.DataFrame()
     except requests.exceptions.RequestException as e:
-        st.session_state.setdefault("_meta_api_errors", []).append(str(e))
+        st.session_state.setdefault("_meta_api_errors", []).append(redact(e))
         return pd.DataFrame()
     except Exception as e:
-        st.session_state.setdefault("_meta_api_errors", []).append(str(e))
+        st.session_state.setdefault("_meta_api_errors", []).append(redact(e))
         return pd.DataFrame()
 
 
