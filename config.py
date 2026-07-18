@@ -15,13 +15,6 @@ import re
 
 import streamlit as st
 
-# Fallback used only if SALES_SHEET_CSV_URL is not configured, so the
-# dashboard keeps working while secrets are being set up.
-_DEFAULT_SHEET_CSV_URL = (
-    "https://docs.google.com/spreadsheets/d/e/"
-    "2PACX-1vToNIxR30TywAr5X3Ok7EOtRoMVnHGttVb6AxUZpkUT8161rVVGCIZ542n9K_SEjsAzGo3yWFUuTuUr"
-    "/pub?gid=559443792&single=true&output=csv"
-)
 
 
 def _secret(name, default=""):
@@ -36,7 +29,7 @@ def _secret(name, default=""):
 
 
 WINDSOR_API_KEY = _secret("WINDSOR_API_KEY")
-SALES_SHEET_CSV_URL = _secret("SALES_SHEET_CSV_URL", _DEFAULT_SHEET_CSV_URL)
+SALES_SHEET_CSV_URL = _secret("SALES_SHEET_CSV_URL")
 
 
 def require_windsor_key():
@@ -64,3 +57,15 @@ def redact(text):
     # catch any api_key=... pattern, even a stale or differently-sourced key
     s = re.sub(r"(api_key=)[^&\s'\"]+", r"\1***REDACTED***", s, flags=re.IGNORECASE)
     return s
+
+
+def require_sheet_url():
+    """Return the sales-sheet CSV URL, or stop with a clear message if missing."""
+    if not SALES_SHEET_CSV_URL:
+        st.error(
+            "⚠️ **رابط الشيت غير مضبوط.**\n\n"
+            "Streamlit Cloud ← التطبيق ← **Settings → Secrets** وضيف:\n\n"
+            "```toml\nSALES_SHEET_CSV_URL = \"رابط-الشيت-بصيغة-CSV\"\n```"
+        )
+        st.stop()
+    return SALES_SHEET_CSV_URL
