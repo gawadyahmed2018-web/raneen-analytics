@@ -168,6 +168,30 @@ def pct_change(cur, prev):
     return (cur - prev) / prev * 100
 
 
+# ── Campaign → Category classification (by keywords in the name) ──
+# Order matters: Dynamic Ads is checked first (Catalog/Purchase markers),
+# then product categories by keyword. Anything unmatched → "Others".
+CATEGORY_RULES = [
+    ("Dynamic Ads", ["catalog", "purchase", "| rt", "retention", "prospective", "dpa", "daba"]),
+    ("Furniture", ["furniture", "sofa", "chair", "table", "wardrobe", "bed", "outdoor"]),
+    ("Kitchen", ["kitchen", "cook"]),
+    ("SDA", ["sda", "small appliance", "small domestic"]),
+    ("MDA", ["mda", "large appliance", "major domestic", "washing", "fridge", "refrigerator", "freezer"]),
+    ("TV", ["tv", "television", "screen", "led", "oled"]),
+    ("Mobile", ["mobile", "phone", "smartphone", "tablet"]),
+    ("Textile", ["textile", "textail", "bedding", "linen", "mattress"]),
+    ("Cosmetics", ["cosmetic", "beauty", "makeup", "skincare"]),
+]
+
+
+def categorize(name):
+    n = str(name).lower()
+    for cat, keys in CATEGORY_RULES:
+        if any(k in n for k in keys):
+            return cat
+    return "Others"
+
+
 # ══════════════════════════════════════════════════════════
 #  SIDEBAR  (unchanged logic)
 # ══════════════════════════════════════════════════════════
@@ -240,23 +264,42 @@ if level not in df_meta.columns:
     st.stop()
 
 # ══════════════════════════════════════════════════════════
-#  CAMPAIGN FILTER — one filter, whole page reacts
+#  CAMPAIGN FILTER — top of page, multi-select, whole page reacts
 # ══════════════════════════════════════════════════════════
-campaign_list = ["All Campaigns"]
+campaign_list = []
 if "campaign" in df_meta.columns:
     camp_spend = df_meta.groupby("campaign")["spend"].sum().sort_values(ascending=False)
-    campaign_list += camp_spend.index.tolist()
+    campaign_list = camp_spend.index.tolist()
 
-with st.sidebar:
-    st.markdown("---")
-    selected_campaign = st.selectbox("🎯 Campaign", campaign_list, key="camp_filter")
+# placeholder container rendered at the top (filled after topbar below)
+filter_container = st.container()
+
+with filter_container:
+    selected_campaigns = st.multiselect(
+        "🎯 Campaigns — اختر واحدة أو أكتر (فاضي = الكل)",
+        campaign_list,
+        default=[],
+        key="camp_filter",
+        placeholder="كل الكامبينات",
+    )
 
 # apply the filter to the whole dataset before any calculation
-if selected_campaign != "All Campaigns" and "campaign" in df_meta.columns:
-    df_meta = df_meta[df_meta["campaign"] == selected_campaign].copy()
+if selected_campaigns and "campaign" in df_meta.columns:
+    df_meta = df_meta[df_meta["campaign"].isin(selected_campaigns)].copy()
     if df_meta.empty:
-        st.warning(f"مفيش بيانات للكامبين '{selected_campaign}' في الفترة دي.")
+        st.warning("مفيش بيانات للكامبينات المختارة في الفترة دي.")
         st.stop()
+
+# label for display
+if not selected_campaigns:
+    campaign_label = "All Campaigns"
+elif len(selected_campaigns) == 1:
+    campaign_label = selected_campaigns[0]
+else:
+    campaign_label = f"{len(selected_campaigns)} campaigns"
+
+# kept for backward-compat with breakdown loaders (they filter by list)
+selected_campaign = "All Campaigns" if not selected_campaigns else campaign_label
 
 # ══════════════════════════════════════════════════════════
 #  TOTALS  (unchanged calculations)
@@ -332,7 +375,7 @@ st.markdown(f"""
   <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
     <span class="chip">📅 {date_span or period_label}</span>
     <span class="chip">📊 {level_label} level</span>
-    <span class="chip" style="color:{C['purple_dark']};background:{C['purple_soft']};border-color:#D9D6FE;">🎯 {selected_campaign[:32]}</span>
+    <span class="chip" style="color:{C['purple_dark']};background:{C['purple_soft']};border-color:#D9D6FE;">🎯 {campaign_label[:32]}</span>
     <span class="chip" style="color:{C['blue_dark']};background:{C['blue_soft']};border-color:#B2DDFF;">Ⓜ Meta via Windsor</span>
   </div>
 </div>
@@ -489,28 +532,41 @@ with t_l:
 
 with t_r:
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown(f'<div style="font-size:14px;font-weight:750;color:{C["ink"]};margin-bottom:8px;">Budget Allocation</div>', unsafe_allow_html=True)
-    top_alloc = grp_full.head(5).copy()
-    others = grp_full.iloc[5:]["spend"].sum() if len(grp_full) > 5 else 0
-    palette = [C["blue"], C["green"], C["orange"], C["purple"], C["teal"], C["ink3"]]
-    labels = top_alloc[level].tolist()
-    values = top_alloc["spend"].tolist()
-    if others > 0:
-        labels.append("Other"); values.append(others)
+    st.markdown(f'<div style="font-size:14px;font-weight:750;color:{C["ink"]};margin-bottom:8px;">Budget by Category</div>', unsafe_allow_html=True)
+    # group spend by campaign category
+    cat_df = df_meta.copy()
+    if "campaign" in cat_df.columns:
+        cat_df["_category"] = cat_df["campaign"].apply(categorize)
+    else:
+        cat_df["_category"] = "Others"
+    cat_g = cat_df.groupby("_category", as_index=False).agg({"spend": "sum", "_purchases": "sum", "_purchase_value": "sum"})
+    cat_g["roas"] = (cat_g["_purchase_value"] / cat_g["spend"]).replace([float("inf")], 0)
+    cat_g = cat_g[cat_g["spend"] > 0].sort_values("spend", ascending=False)
+
+    cat_colors = {
+        "Dynamic Ads": C["purple"], "Furniture": C["blue"], "Kitchen": C["orange"],
+        "SDA": C["teal"], "MDA": C["green"], "TV": C["pink"], "Mobile": "#0EA5E9",
+        "Textile": "#A855F7", "Cosmetics": "#F43F5E", "Others": C["ink3"],
+    }
+    labels = cat_g["_category"].tolist()
+    values = cat_g["spend"].tolist()
+    colors = [cat_colors.get(l, C["ink3"]) for l in labels]
+
     fig = go.Figure(go.Pie(labels=labels, values=values, hole=0.64,
-                           marker=dict(colors=palette[:len(labels)], line=dict(color="#fff", width=2)),
-                           textinfo="none", sort=False))
-    fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", showlegend=False, height=170, margin=dict(l=0,r=0,t=0,b=0),
+                           marker=dict(colors=colors, line=dict(color="#fff", width=2)),
+                           textinfo="none", sort=False,
+                           hovertemplate="%{label}<br>%{value:,.0f} (%{percent})<extra></extra>"))
+    fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", showlegend=False, height=180, margin=dict(l=0,r=0,t=0,b=0),
                       annotations=[dict(text=f"<b>{fmt_currency(tot_spend)}</b><br><span style='font-size:9px;color:{C['ink3']}'>Total Spend</span>",
                                         x=0.5, y=0.5, font_size=13, showarrow=False, font_color=C["ink"])])
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
     leg = ""
-    for i, (lab, val) in enumerate(zip(labels, values)):
+    for _, r in cat_g.iterrows():
+        lab = r["_category"]; val = r["spend"]
         p = (val/tot_spend*100) if tot_spend else 0
-        short = (lab[:16] + "…") if len(str(lab)) > 17 else lab
-        leg += (f'<div class="legend-row"><span class="legend-dot" style="background:{palette[i%len(palette)]}"></span>'
-                f'<span class="legend-name">{short}</span><span class="legend-pct">{p:.0f}%</span>'
-                f'<span class="legend-val">{fmt_currency(val)}</span></div>')
+        leg += (f'<div class="legend-row"><span class="legend-dot" style="background:{cat_colors.get(lab, C["ink3"])}"></span>'
+                f'<span class="legend-name">{lab}</span><span class="legend-pct">{p:.0f}%</span>'
+                f'<span class="legend-val">{fmt_currency(val)} · {r["roas"]:.1f}x</span></div>')
     st.markdown(leg, unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -530,8 +586,8 @@ def load_level(preset, d_from, d_to, lvl, camp_filter):
             df[c] = df[c].apply(safe_num)
     df["_purchases"] = df["actions_purchase"] if "actions_purchase" in df.columns else 0
     df["_purchase_value"] = df["action_values_purchase"] if "action_values_purchase" in df.columns else 0
-    if camp_filter != "All Campaigns" and "campaign" in df.columns:
-        df = df[df["campaign"] == camp_filter]
+    if camp_filter and "campaign" in df.columns:
+        df = df[df["campaign"].isin(camp_filter)]
     return df
 
 
@@ -569,11 +625,11 @@ def render_level_table(df_lvl, lvl_col, lvl_name):
 st.markdown(sec("🔍 Ad Sets & Ads Breakdown", "اضغط لعرض التفاصيل — تتحمّل عند الطلب"), unsafe_allow_html=True)
 
 with st.expander("📂 Ad Sets Performance"):
-    df_adset = load_level(date_preset, _d_from, _d_to, "adset_name", selected_campaign)
+    df_adset = load_level(date_preset, _d_from, _d_to, "adset_name", selected_campaigns)
     render_level_table(df_adset, "adset_name", "Ad Set")
 
 with st.expander("📄 Ads Performance"):
-    df_ad = load_level(date_preset, _d_from, _d_to, "ad_name", selected_campaign)
+    df_ad = load_level(date_preset, _d_from, _d_to, "ad_name", selected_campaigns)
     render_level_table(df_ad, "ad_name", "Ad")
 
 
@@ -593,8 +649,8 @@ def load_breakdown(preset, d_from, d_to, extra_fields, camp_filter):
             df[c] = df[c].apply(safe_num)
     df["_purchases"] = df["actions_purchase"] if "actions_purchase" in df.columns else 0
     df["_purchase_value"] = df["action_values_purchase"] if "action_values_purchase" in df.columns else 0
-    if camp_filter != "All Campaigns" and "campaign" in df.columns:
-        df = df[df["campaign"] == camp_filter]
+    if camp_filter and "campaign" in df.columns:
+        df = df[df["campaign"].isin(camp_filter)]
     return df
 
 
@@ -622,72 +678,67 @@ def hbar_chart(g, dim, color, height=280, top=8):
     return fig
 
 
-st.markdown(sec("🎯 Audience & Placement Insights", "من أين تأتي النتائج — تتحمّل عند الطلب"), unsafe_allow_html=True)
+st.markdown(sec("🎯 Audience & Placement Insights", "من أين تأتي النتائج"), unsafe_allow_html=True)
 
-# ── Placements ──
-with st.expander("📍 Placements — أين تظهر إعلاناتك (Platform + Position)"):
-    df_pl = load_breakdown(date_preset, _d_from, _d_to, ["publisher_platform", "platform_position"], selected_campaign)
-    if df_pl.empty:
-        st.info("مفيش بيانات placements في الفترة/الكامبين المختار.")
-    else:
-        pc1, pc2 = st.columns(2)
-        with pc1:
-            st.markdown(f'<div style="font-size:13px;font-weight:700;color:{C["ink2"]};margin-bottom:6px;">حسب المنصة (Platform)</div>', unsafe_allow_html=True)
-            g_plat = breakdown_agg(df_pl, "publisher_platform")
-            if not g_plat.empty:
-                st.plotly_chart(hbar_chart(g_plat, "publisher_platform", C["blue"], height=240), use_container_width=True, config={"displayModeBar": False})
-        with pc2:
-            st.markdown(f'<div style="font-size:13px;font-weight:700;color:{C["ink2"]};margin-bottom:6px;">حسب الموضع (Position)</div>', unsafe_allow_html=True)
-            g_pos = breakdown_agg(df_pl, "platform_position")
-            if not g_pos.empty:
-                st.plotly_chart(hbar_chart(g_pos, "platform_position", C["purple"], height=240), use_container_width=True, config={"displayModeBar": False})
+# Load the three breakdowns (cached)
+df_pl = load_breakdown(date_preset, _d_from, _d_to, ["publisher_platform"], selected_campaigns)
+df_dg = load_breakdown(date_preset, _d_from, _d_to, ["age", "gender"], selected_campaigns)
 
-# ── Demographics (Age + Gender) ──
-with st.expander("👥 Demographics — العمر والنوع (Age + Gender)"):
-    df_dg = load_breakdown(date_preset, _d_from, _d_to, ["age", "gender"], selected_campaign)
-    if df_dg.empty:
-        st.info("مفيش بيانات ديموغرافية في الفترة/الكامبين المختار.")
-    else:
-        dc1, dc2 = st.columns(2)
-        with dc1:
-            st.markdown(f'<div style="font-size:13px;font-weight:700;color:{C["ink2"]};margin-bottom:6px;">حسب العمر (Age)</div>', unsafe_allow_html=True)
-            g_age = breakdown_agg(df_dg, "age").sort_values("age")
-            if not g_age.empty:
-                fig = go.Figure(go.Bar(x=g_age["age"].astype(str), y=g_age["spend"], marker_color=C["teal"],
-                                       text=[f"{r:.1f}x" for r in g_age["roas"]], textposition="outside",
-                                       hovertemplate="Age %{x}<br>Spend: %{y:,.0f}<extra></extra>"))
-                fig.update_layout(**PLOT, height=260)
-                st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-        with dc2:
-            st.markdown(f'<div style="font-size:13px;font-weight:700;color:{C["ink2"]};margin-bottom:6px;">حسب النوع (Gender)</div>', unsafe_allow_html=True)
-            g_gen = breakdown_agg(df_dg, "gender")
-            if not g_gen.empty:
-                gmap = {"male": "ذكور", "female": "إناث", "unknown": "غير محدد"}
-                colors_g = {"male": C["blue"], "female": C["pink"], "unknown": C["ink3"]}
-                fig = go.Figure(go.Pie(
-                    labels=[gmap.get(x, x) for x in g_gen["gender"]], values=g_gen["spend"], hole=0.6,
-                    marker=dict(colors=[colors_g.get(x, C["ink3"]) for x in g_gen["gender"]], line=dict(color="#fff", width=2)),
-                    textinfo="label+percent", textfont=dict(size=12),
-                ))
-                fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", showlegend=False, height=260, margin=dict(l=0,r=0,t=10,b=0))
-                st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-        # Age × Gender heat-style table
-        if "age" in df_dg.columns and "gender" in df_dg.columns:
-            st.markdown(f'<div style="font-size:13px;font-weight:700;color:{C["ink2"]};margin:10px 0 6px;">العمر × النوع (Spend)</div>', unsafe_allow_html=True)
-            pivot = df_dg.groupby(["age", "gender"])["spend"].sum().reset_index()
-            pivot_t = pivot.pivot(index="age", columns="gender", values="spend").fillna(0)
-            st.dataframe(pivot_t, use_container_width=True)
+ins1, ins2, ins3 = st.columns(3)
 
-# ── Geography ──
-with st.expander("🗺️ Geography — التوزيع الجغرافي (Region)"):
-    df_geo = load_breakdown(date_preset, _d_from, _d_to, ["country", "region"], selected_campaign)
-    if df_geo.empty:
-        st.info("مفيش بيانات جغرافية في الفترة/الكامبين المختار.")
+# ── Chart 1: Placements (Platform) ──
+with ins1:
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.markdown(f'<div style="font-size:14px;font-weight:750;color:{C["ink"]};margin-bottom:8px;">📍 Placements</div>', unsafe_allow_html=True)
+    g_plat = breakdown_agg(df_pl, "publisher_platform")
+    if g_plat.empty:
+        st.info("مفيش بيانات.")
     else:
-        g_reg = breakdown_agg(df_geo, "region")
-        if not g_reg.empty:
-            st.markdown(f'<div style="font-size:13px;font-weight:700;color:{C["ink2"]};margin-bottom:6px;">أعلى المحافظات بالإنفاق (Top Regions)</div>', unsafe_allow_html=True)
-            st.plotly_chart(hbar_chart(g_reg, "region", C["orange"], height=380, top=15), use_container_width=True, config={"displayModeBar": False})
+        plat_colors = {"facebook": C["blue"], "instagram": C["pink"], "audience_network": C["teal"], "messenger": C["purple"], "threads": C["ink3"]}
+        fig = go.Figure(go.Pie(
+            labels=g_plat["publisher_platform"], values=g_plat["spend"], hole=0.6,
+            marker=dict(colors=[plat_colors.get(x, C["ink3"]) for x in g_plat["publisher_platform"]], line=dict(color="#fff", width=2)),
+            textinfo="label+percent", textfont=dict(size=11),
+            hovertemplate="%{label}<br>%{value:,.0f} (%{percent})<extra></extra>",
+        ))
+        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", showlegend=False, height=280, margin=dict(l=0,r=0,t=10,b=0))
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# ── Chart 2: Age ──
+with ins2:
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.markdown(f'<div style="font-size:14px;font-weight:750;color:{C["ink"]};margin-bottom:8px;">👥 By Age</div>', unsafe_allow_html=True)
+    g_age = breakdown_agg(df_dg, "age").sort_values("age")
+    if g_age.empty:
+        st.info("مفيش بيانات.")
+    else:
+        fig = go.Figure(go.Bar(x=g_age["age"].astype(str), y=g_age["spend"], marker_color=C["blue"],
+                               text=[f"{r:.1f}x" for r in g_age["roas"]], textposition="outside",
+                               hovertemplate="Age %{x}<br>Spend: %{y:,.0f}<extra></extra>"))
+        fig.update_layout(**PLOT, height=280)
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# ── Chart 3: Gender ──
+with ins3:
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.markdown(f'<div style="font-size:14px;font-weight:750;color:{C["ink"]};margin-bottom:8px;">⚧ By Gender</div>', unsafe_allow_html=True)
+    g_gen = breakdown_agg(df_dg, "gender")
+    if g_gen.empty:
+        st.info("مفيش بيانات.")
+    else:
+        gmap = {"male": "ذكور", "female": "إناث", "unknown": "غير محدد"}
+        colors_g = {"male": C["blue"], "female": C["pink"], "unknown": C["ink3"]}
+        fig = go.Figure(go.Pie(
+            labels=[gmap.get(x, x) for x in g_gen["gender"]], values=g_gen["spend"], hole=0.6,
+            marker=dict(colors=[colors_g.get(x, C["ink3"]) for x in g_gen["gender"]], line=dict(color="#fff", width=2)),
+            textinfo="label+percent", textfont=dict(size=12),
+            hovertemplate="%{label}<br>%{value:,.0f} (%{percent})<extra></extra>",
+        ))
+        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", showlegend=False, height=280, margin=dict(l=0,r=0,t=10,b=0))
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════
