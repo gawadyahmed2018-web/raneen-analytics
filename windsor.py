@@ -9,7 +9,9 @@ import pandas as pd
 import streamlit as st
 from datetime import date, timedelta
 
-WINDSOR_KEY = "d9457cee421e35fb6dd6f37728604a86b321"
+from config import WINDSOR_API_KEY, require_windsor_key, redact
+
+WINDSOR_KEY = WINDSOR_API_KEY
 WINDSOR_BASE = "https://connectors.windsor.ai/all"
 
 # Windsor account names exactly as they appear in your connected accounts
@@ -41,7 +43,7 @@ def _fetch_one_account(account_name, fields, date_from, date_to, timeout=45):
     fields_clean = list(dict.fromkeys(["account_name"] + [f for f in fields if f != "account_name"]))
 
     params = {
-        "api_key": WINDSOR_KEY,
+        "api_key": require_windsor_key(),
         "fields": ",".join(fields_clean),
         "date_from": str(date_from),
         "date_to": str(date_to),
@@ -64,10 +66,10 @@ def _fetch_one_account(account_name, fields, date_from, date_to, timeout=45):
             df = df[df["datasource"].astype(str).str.strip() == "googleanalytics4"]
         return df
     except requests.exceptions.RequestException as e:
-        st.warning(f"Windsor API error for {account_name}: {e}")
+        st.warning(f"Windsor API error for {account_name}: {redact(e)}")
         return pd.DataFrame()
     except Exception as e:
-        st.warning(f"Data error for {account_name}: {e}")
+        st.warning(f"Data error for {account_name}: {redact(e)}")
         return pd.DataFrame()
 
 
