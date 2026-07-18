@@ -1,0 +1,15 @@
+# Streamlit secrets — NEVER commit these
+.streamlit/secrets.toml
+secrets.toml
+*.env
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
