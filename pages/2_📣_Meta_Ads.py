@@ -226,7 +226,8 @@ _d_from, _d_to = (str(custom_from), str(custom_to)) if date_preset == "custom" e
 #  DATA LOADING  (unchanged logic — confirmed Windsor fields)
 # ══════════════════════════════════════════════════════════
 BASE_FIELDS = ["date", "account_name", "campaign", "spend", "clicks", "impressions", "reach", "frequency"]
-ACTION_FIELDS = ["actions_purchase", "action_values_purchase"]
+ACTION_FIELDS = ["actions_purchase", "action_values_purchase",
+                 "actions_landing_page_view", "actions_add_to_cart", "actions_initiate_checkout"]
 
 
 @st.cache_data(ttl=300, show_spinner="Loading Meta Ads data... قد يستغرق دقيقة في مستوى Ad Set / Ad")
@@ -251,7 +252,8 @@ if df_meta.empty:
     st.stop()
 
 # Normalize
-NUM_COLS = ["spend", "clicks", "impressions", "reach", "frequency", "actions_purchase", "action_values_purchase"]
+NUM_COLS = ["spend", "clicks", "impressions", "reach", "frequency", "actions_purchase", "action_values_purchase",
+            "actions_landing_page_view", "actions_add_to_cart", "actions_initiate_checkout"]
 for c in NUM_COLS:
     if c in df_meta.columns:
         df_meta[c] = df_meta[c].apply(safe_num)
@@ -271,17 +273,13 @@ if "campaign" in df_meta.columns:
     camp_spend = df_meta.groupby("campaign")["spend"].sum().sort_values(ascending=False)
     campaign_list = camp_spend.index.tolist()
 
-# placeholder container rendered at the top (filled after topbar below)
-filter_container = st.container()
-
-with filter_container:
-    selected_campaigns = st.multiselect(
-        "🎯 Campaigns — اختر واحدة أو أكتر (فاضي = الكل)",
-        campaign_list,
-        default=[],
-        key="camp_filter",
-        placeholder="كل الكامبينات",
-    )
+selected_campaigns = st.multiselect(
+    "🎯 فلتر الكامبينات — اختر واحدة أو أكتر (سيبه فاضي = كل الكامبينات)",
+    campaign_list,
+    default=[],
+    key="camp_filter",
+    placeholder="كل الكامبينات",
+)
 
 # apply the filter to the whole dataset before any calculation
 if selected_campaigns and "campaign" in df_meta.columns:
@@ -315,6 +313,11 @@ cpc = (tot_spend / tot_clicks) if tot_clicks > 0 else 0
 cpa = (tot_spend / tot_purchases) if tot_purchases > 0 else 0
 roas = (tot_purchase_value / tot_spend) if tot_spend > 0 else 0
 aov = (tot_purchase_value / tot_purchases) if tot_purchases > 0 else 0
+
+# ── Funnel stage totals ──
+tot_lpv = df_meta["actions_landing_page_view"].sum() if "actions_landing_page_view" in df_meta.columns else 0
+tot_atc = df_meta["actions_add_to_cart"].sum() if "actions_add_to_cart" in df_meta.columns else 0
+tot_ic = df_meta["actions_initiate_checkout"].sum() if "actions_initiate_checkout" in df_meta.columns else 0
 
 # daily series (for sparklines + charts) — aggregate by date
 if "date" in df_meta.columns:
@@ -454,6 +457,73 @@ with ai_r:
         st.markdown(f'<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid {C["line"]};">'
                     f'<span style="font-size:12.5px;color:{C["ink2"]};font-weight:600;">{label}</span>'
                     f'<span style="font-size:14px;color:{color};font-weight:800;">{val}</span></div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════
+#  CONVERSION FUNNEL  — reacts to campaign filter
+#  Impressions → LP Views → Add to Cart → Checkout → Purchase
+# ══════════════════════════════════════════════════════════
+st.markdown(sec("🔻 Conversion Funnel", "مسار التحويل — نسبة التسريب بين كل مرحلة"), unsafe_allow_html=True)
+
+# stages (drop those that are entirely zero so the funnel stays meaningful)
+stage_defs = [
+    ("Impressions", tot_impressions, "👁"),
+    ("Landing Page Views", tot_lpv, "🖥"),
+    ("Add to Cart", tot_atc, "🛒"),
+    ("Checkout", tot_ic, "💳"),
+    ("Purchase", tot_purchases, "✅"),
+]
+stages = [(n, v, i) for n, v, i in stage_defs if v > 0]
+
+fn_l, fn_r = st.columns([1.4, 1])
+
+with fn_l:
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    if len(stages) >= 2:
+        names = [s[0] for s in stages]
+        vals = [s[1] for s in stages]
+        fig = go.Figure(go.Funnel(
+            y=names, x=vals,
+            textposition="inside", textinfo="value+percent initial",
+            marker=dict(color=[C["blue"], C["teal"], C["amber"], C["orange"], C["green"]][:len(stages)]),
+            connector=dict(line=dict(color=C["line"], width=1)),
+        ))
+        fig.update_layout(**{k: v for k, v in PLOT.items() if k in ("paper_bgcolor", "plot_bgcolor", "font")},
+                          height=340, margin=dict(l=10, r=10, t=10, b=10))
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    else:
+        st.info("مفيش بيانات كافية لرسم الفانل في الفترة/الكامبين المختار.")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+with fn_r:
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.markdown(f'<div style="font-size:14px;font-weight:750;color:{C["ink"]};margin-bottom:10px;">Drop-off بين المراحل</div>', unsafe_allow_html=True)
+    # step-to-step conversion + drop
+    for i in range(1, len(stages)):
+        prev_n, prev_v, _ = stages[i-1]
+        cur_n, cur_v, cur_i = stages[i]
+        conv = (cur_v / prev_v * 100) if prev_v else 0
+        drop = 100 - conv
+        # color by how bad the drop is
+        dcol = C["green"] if drop <= 40 else (C["amber"] if drop <= 70 else C["red"])
+        st.markdown(
+            f'<div style="margin-bottom:12px;">'
+            f'<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;">'
+            f'<span style="color:{C["ink2"]};font-weight:600;">{prev_n} → {cur_n}</span>'
+            f'<span style="color:{dcol};font-weight:800;">{conv:.1f}%</span></div>'
+            f'<div style="height:8px;background:{C["line"]};border-radius:100px;overflow:hidden;">'
+            f'<div style="width:{min(conv,100)}%;height:100%;background:{dcol};border-radius:100px;"></div></div>'
+            f'<div style="font-size:10.5px;color:{C["ink3"]};margin-top:3px;">تسريب {drop:.1f}% · {fmt_number(prev_v)} ← {fmt_number(cur_v)}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    # overall CVR
+    if tot_impressions > 0 and tot_purchases > 0:
+        overall = tot_purchases / tot_impressions * 100
+        st.markdown(f'<div style="margin-top:8px;padding-top:10px;border-top:1px solid {C["line"]};display:flex;justify-content:space-between;">'
+                    f'<span style="font-size:12.5px;color:{C["ink2"]};font-weight:700;">Overall CVR</span>'
+                    f'<span style="font-size:14px;color:{C["purple"]};font-weight:800;">{overall:.3f}%</span></div>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
 
@@ -680,6 +750,28 @@ def hbar_chart(g, dim, color, height=280, top=8):
 
 st.markdown(sec("🎯 Audience & Placement Insights", "من أين تأتي النتائج"), unsafe_allow_html=True)
 
+# metric selector — drives all three charts
+METRIC_MAP = {
+    "ROAS": ("roas", "x", False),
+    "Purchases": ("_purchases", "", False),
+    "Spend": ("spend", "", True),
+    "Revenue": ("_purchase_value", "", False),
+}
+metric_choice = st.radio(
+    "المقياس", list(METRIC_MAP.keys()), horizontal=True, key="ins_metric", label_visibility="collapsed"
+)
+metric_col, metric_unit, _ = METRIC_MAP[metric_choice]
+
+def metric_val(row):
+    return row.get(metric_col, 0)
+
+def fmt_metric(v):
+    if metric_choice == "ROAS":
+        return f"{v:.2f}x"
+    if metric_choice == "Purchases":
+        return fmt_number(v)
+    return fmt_currency(v)
+
 # Load the three breakdowns (cached)
 df_pl = load_breakdown(date_preset, _d_from, _d_to, ["publisher_platform"], selected_campaigns)
 df_dg = load_breakdown(date_preset, _d_from, _d_to, ["age", "gender"], selected_campaigns)
@@ -689,33 +781,35 @@ ins1, ins2, ins3 = st.columns(3)
 # ── Chart 1: Placements (Platform) ──
 with ins1:
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown(f'<div style="font-size:14px;font-weight:750;color:{C["ink"]};margin-bottom:8px;">📍 Placements</div>', unsafe_allow_html=True)
+    st.markdown(f'<div style="font-size:14px;font-weight:750;color:{C["ink"]};margin-bottom:8px;">📍 Placements · {metric_choice}</div>', unsafe_allow_html=True)
     g_plat = breakdown_agg(df_pl, "publisher_platform")
     if g_plat.empty:
         st.info("مفيش بيانات.")
     else:
         plat_colors = {"facebook": C["blue"], "instagram": C["pink"], "audience_network": C["teal"], "messenger": C["purple"], "threads": C["ink3"]}
-        fig = go.Figure(go.Pie(
-            labels=g_plat["publisher_platform"], values=g_plat["spend"], hole=0.6,
-            marker=dict(colors=[plat_colors.get(x, C["ink3"]) for x in g_plat["publisher_platform"]], line=dict(color="#fff", width=2)),
-            textinfo="label+percent", textfont=dict(size=11),
-            hovertemplate="%{label}<br>%{value:,.0f} (%{percent})<extra></extra>",
+        g_plat = g_plat.sort_values(metric_col, ascending=False)
+        # ROAS/Purchases/Revenue as bar; Spend keeps donut share feel — use bar for all for comparability
+        fig = go.Figure(go.Bar(
+            x=g_plat[metric_col], y=g_plat["publisher_platform"], orientation="h",
+            marker_color=[plat_colors.get(x, C["ink3"]) for x in g_plat["publisher_platform"]],
+            text=[fmt_metric(v) for v in g_plat[metric_col]], textposition="auto",
+            hovertemplate="%{y}<br>"+metric_choice+": %{x:,.2f}<extra></extra>",
         ))
-        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", showlegend=False, height=280, margin=dict(l=0,r=0,t=10,b=0))
+        fig.update_layout(**PLOT, height=280)
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ── Chart 2: Age ──
 with ins2:
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown(f'<div style="font-size:14px;font-weight:750;color:{C["ink"]};margin-bottom:8px;">👥 By Age</div>', unsafe_allow_html=True)
+    st.markdown(f'<div style="font-size:14px;font-weight:750;color:{C["ink"]};margin-bottom:8px;">👥 By Age · {metric_choice}</div>', unsafe_allow_html=True)
     g_age = breakdown_agg(df_dg, "age").sort_values("age")
     if g_age.empty:
         st.info("مفيش بيانات.")
     else:
-        fig = go.Figure(go.Bar(x=g_age["age"].astype(str), y=g_age["spend"], marker_color=C["blue"],
-                               text=[f"{r:.1f}x" for r in g_age["roas"]], textposition="outside",
-                               hovertemplate="Age %{x}<br>Spend: %{y:,.0f}<extra></extra>"))
+        fig = go.Figure(go.Bar(x=g_age["age"].astype(str), y=g_age[metric_col], marker_color=C["blue"],
+                               text=[fmt_metric(v) for v in g_age[metric_col]], textposition="outside",
+                               hovertemplate="Age %{x}<br>"+metric_choice+": %{y:,.2f}<extra></extra>"))
         fig.update_layout(**PLOT, height=280)
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
     st.markdown('</div>', unsafe_allow_html=True)
@@ -723,20 +817,31 @@ with ins2:
 # ── Chart 3: Gender ──
 with ins3:
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown(f'<div style="font-size:14px;font-weight:750;color:{C["ink"]};margin-bottom:8px;">⚧ By Gender</div>', unsafe_allow_html=True)
+    st.markdown(f'<div style="font-size:14px;font-weight:750;color:{C["ink"]};margin-bottom:8px;">⚧ By Gender · {metric_choice}</div>', unsafe_allow_html=True)
     g_gen = breakdown_agg(df_dg, "gender")
     if g_gen.empty:
         st.info("مفيش بيانات.")
     else:
         gmap = {"male": "ذكور", "female": "إناث", "unknown": "غير محدد"}
         colors_g = {"male": C["blue"], "female": C["pink"], "unknown": C["ink3"]}
-        fig = go.Figure(go.Pie(
-            labels=[gmap.get(x, x) for x in g_gen["gender"]], values=g_gen["spend"], hole=0.6,
-            marker=dict(colors=[colors_g.get(x, C["ink3"]) for x in g_gen["gender"]], line=dict(color="#fff", width=2)),
-            textinfo="label+percent", textfont=dict(size=12),
-            hovertemplate="%{label}<br>%{value:,.0f} (%{percent})<extra></extra>",
-        ))
-        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", showlegend=False, height=280, margin=dict(l=0,r=0,t=10,b=0))
+        # ROAS is a ratio → bar (not share); Spend/Revenue/Purchases → donut share
+        if metric_choice == "ROAS":
+            g_gen = g_gen.sort_values(metric_col, ascending=False)
+            fig = go.Figure(go.Bar(
+                x=[gmap.get(x, x) for x in g_gen["gender"]], y=g_gen[metric_col],
+                marker_color=[colors_g.get(x, C["ink3"]) for x in g_gen["gender"]],
+                text=[fmt_metric(v) for v in g_gen[metric_col]], textposition="outside",
+                hovertemplate="%{x}<br>ROAS: %{y:.2f}x<extra></extra>",
+            ))
+            fig.update_layout(**PLOT, height=280)
+        else:
+            fig = go.Figure(go.Pie(
+                labels=[gmap.get(x, x) for x in g_gen["gender"]], values=g_gen[metric_col], hole=0.6,
+                marker=dict(colors=[colors_g.get(x, C["ink3"]) for x in g_gen["gender"]], line=dict(color="#fff", width=2)),
+                textinfo="label+percent", textfont=dict(size=12),
+                hovertemplate="%{label}<br>%{value:,.0f} (%{percent})<extra></extra>",
+            ))
+            fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", showlegend=False, height=280, margin=dict(l=0,r=0,t=10,b=0))
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
     st.markdown('</div>', unsafe_allow_html=True)
 
