@@ -698,6 +698,77 @@ st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════
+#  CATEGORY FUNNEL — View → Cart → Checkout → Purchase
+# ══════════════════════════════════════════════════════════
+st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+st.markdown('<div class="card">', unsafe_allow_html=True)
+st.markdown('<div class="card-t">Category Funnel</div>', unsafe_allow_html=True)
+st.markdown('<div class="card-sub">شوف الدروب بيحصل فين — View → Cart → Checkout → Purchase</div>',
+            unsafe_allow_html=True)
+
+if g_cat.empty:
+    st.info("مفيش بيانات فئات للفانل.")
+else:
+    # try to pull an item-scoped checkout metric per category (قد لا يدعمه الـ connector)
+    fn_cat = g_cat.copy()
+    fn_cat["items_checked_out"] = np.nan
+    try:
+        _ck = seg("item_category", ["items_checked_out"], timeout=90)
+        if not _ck.empty and "items_checked_out" in _ck.columns:
+            _ck = _ck.groupby("item_category", as_index=False)["items_checked_out"].sum()
+            _ck["item_category"] = _ck["item_category"].astype(str)
+            fn_cat = fn_cat.drop(columns=["items_checked_out"]).merge(_ck, on="item_category", how="left")
+    except Exception:
+        pass
+    has_checkout = fn_cat["items_checked_out"].fillna(0).sum() > 0
+
+    # ── الفلتر فوق الفانل ──
+    f_opts = ["كل الفئات"] + fn_cat["item_category"].tolist()
+    fcf1, _sp = st.columns([1, 3])
+    with fcf1:
+        f_sel = st.selectbox("الفئة", f_opts, key="ga4_funnel_filter")
+    d_fn = fn_cat if f_sel == "كل الفئات" else fn_cat[fn_cat["item_category"] == f_sel]
+
+    # ── تجميع المراحل (مرحلة الـ checkout بتتحط بس لو الـ connector رجّعها) ──
+    stage_defs = [("👁️ مشاهدات",  "items_viewed",        C["blue"]),
+                  ("🛒 السلة",     "items_added_to_cart", C["green"]),
+                  ("💳 تشيك أوت",  "items_checked_out",   C["amber"]),
+                  ("✅ شراء",      "items_purchased",     C["orange"])]
+    labels, values, colors, shorts = [], [], [], []
+    for _lab, _col, _color in stage_defs:
+        if _col == "items_checked_out" and not has_checkout:
+            continue
+        if _col in d_fn.columns:
+            labels.append(_lab); colors.append(_color)
+            shorts.append(_lab.split(" ", 1)[1])
+            values.append(float(d_fn[_col].fillna(0).sum()))
+
+    if len(values) >= 2 and values[0] > 0:
+        fig_fn = go.Figure(go.Funnel(
+            y=labels, x=values,
+            textinfo="value+percent initial+percent previous",
+            marker={"color": colors},
+            connector={"line": {"color": C["line"], "width": 1}}))
+        fig_fn.update_layout(**{k: v for k, v in PLOT.items() if k not in ("xaxis", "yaxis")},
+                             height=360, margin=dict(l=10, r=10, t=6, b=6))
+        st.plotly_chart(fig_fn, use_container_width=True, config={"displayModeBar": False})
+
+        # الدروب بين كل مرحلتين
+        dcols = st.columns(len(values) - 1)
+        for _i, _cc in enumerate(dcols):
+            _passr = values[_i + 1] / values[_i] * 100 if values[_i] else 0
+            with _cc:
+                st.metric(f"{shorts[_i]} → {shorts[_i + 1]}", f"{_passr:.1f}%",
+                          f"-{100 - _passr:.1f}%")
+        if not has_checkout:
+            st.caption("⚠️ مرحلة الـ Checkout مش متاحة على مستوى الفئة في الـ connector، "
+                       "فالفانل بيعرض 3 مراحل (View → Cart → Purchase).")
+    else:
+        st.info("مفيش بيانات كفاية لعرض الفانل.")
+st.markdown('</div>', unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════
 #  ROW 3 — CATEGORY · TOP PRODUCTS · USERS · GEOGRAPHY
 # ══════════════════════════════════════════════════════════
 st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
