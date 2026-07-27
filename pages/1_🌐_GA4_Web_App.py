@@ -749,7 +749,7 @@ else:
             textinfo="value+percent initial+percent previous",
             marker={"color": colors},
             connector={"line": {"color": C["line"], "width": 1}}))
-        fig_fn.update_layout(**{k: v for k, v in PLOT.items() if k not in ("xaxis", "yaxis")},
+        fig_fn.update_layout(**{k: v for k, v in PLOT.items() if k not in ("xaxis", "yaxis", "margin")},
                              height=360, margin=dict(l=10, r=10, t=6, b=6))
         st.plotly_chart(fig_fn, use_container_width=True, config={"displayModeBar": False})
 
