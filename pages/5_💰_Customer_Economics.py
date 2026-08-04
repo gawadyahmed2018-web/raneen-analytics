@@ -24,8 +24,7 @@ import numpy as np
 import plotly.graph_objects as go
 
 from windsor import get_windsor_data, safe_num, fmt_currency, fmt_number, fmt_pct
-from meta_windsor import get_meta_data
-from google_ads_windsor import get_google_ads_data
+from sheets_connector import load_sales_sheet
 
 st.set_page_config(page_title="Raneen · Customer Economics", page_icon="💰",
                    layout="wide", initial_sidebar_state="expanded")
@@ -166,34 +165,33 @@ def fetch_ga(dfrom, dto):
     return _num(df, GA_MET_FALLBACK) if not df.empty else pd.DataFrame()
 
 
+# Marketing spend comes from the finance sheet (same source as the Executive
+# Summary), NOT the live ad connectors — so numbers reconcile with finance.
+SHEET_TOTAL = "Total Spending"
+SHEET_CH_COLS = ["Facebook Spending", "Google Spending", "TikTok Spending",
+                 "SMS Spending", "Criteo Spending", "Coupons", "Extra Spending"]
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_spend(dfrom, dto):
-    """Daily spend from Meta + Google Ads. Returns df[date, meta, google, total]."""
-    frames = []
-    m = get_meta_data(["date", "spend"], date_from=str(dfrom), date_to=str(dto), timeout=90)
-    if not m.empty and "spend" in m.columns and "date" in m.columns:
-        m = m[["date", "spend"]].copy()
-        m["spend"] = pd.to_numeric(m["spend"], errors="coerce").fillna(0)
-        m = m.groupby("date", as_index=False)["spend"].sum().rename(columns={"spend": "meta"})
-        frames.append(m)
-    g = get_google_ads_data(["date", "spend"], date_from=str(dfrom), date_to=str(dto), timeout=90)
-    if not g.empty and "spend" in g.columns and "date" in g.columns:
-        g = g[["date", "spend"]].copy()
-        g["spend"] = pd.to_numeric(g["spend"], errors="coerce").fillna(0)
-        g = g.groupby("date", as_index=False)["spend"].sum().rename(columns={"spend": "google"})
-        frames.append(g)
-    if not frames:
-        return pd.DataFrame(columns=["date", "meta", "google", "total"])
-    out = frames[0]
-    for f in frames[1:]:
-        out = out.merge(f, on="date", how="outer")
-    for c in ("meta", "google"):
-        if c not in out.columns:
-            out[c] = 0
-    out[["meta", "google"]] = out[["meta", "google"]].fillna(0)
-    out["date"] = pd.to_datetime(out["date"], errors="coerce")
-    out = out.dropna(subset=["date"])
-    out["total"] = out["meta"] + out["google"]
+    """Daily marketing spend from the sales sheet, sliced to the window.
+
+    Returns df[date, total, <channel columns that exist>].
+    """
+    df = load_sales_sheet()
+    if df.empty or "Date" not in df.columns:
+        return pd.DataFrame(columns=["date", "total"])
+    d = df.copy()
+    d["date"] = pd.to_datetime(d["Date"], errors="coerce")
+    d = d.dropna(subset=["date"])
+    d = d[(d["date"].dt.date >= dfrom) & (d["date"].dt.date <= dto)]
+    keep = [SHEET_TOTAL] + [c for c in SHEET_CH_COLS if c in d.columns]
+    keep = [c for c in keep if c in d.columns]
+    if SHEET_TOTAL not in keep:
+        return pd.DataFrame(columns=["date", "total"])
+    for c in keep:
+        d[c] = pd.to_numeric(d[c], errors="coerce").fillna(0)
+    out = d.groupby("date", as_index=False)[keep].sum().rename(columns={SHEET_TOTAL: "total"})
     return out
 
 
@@ -295,22 +293,26 @@ def _ltv_base(df):
 
 
 def _spend_series(sp):
-    """Daily spend, mapped to the selected channel (paid channels only)."""
+    """Daily spend from the sheet, mapped to the selected channel."""
     if sp.empty:
         return pd.Series(dtype=float)
     s = sp.set_index("date")
     if sel_ch == ALL_CH:
-        col = "total"
+        return s["total"] if "total" in s.columns else pd.Series(0.0, index=s.index)
+    cl = sel_ch.lower()
+    if any(k in cl for k in ("social", "facebook", "meta", "instagram")):
+        cols = ["Facebook Spending", "TikTok Spending"]      # paid social = Meta + TikTok
+    elif any(k in cl for k in ("search", "shopping", "display", "video", "pmax",
+                               "performance max", "cross-network", "google")):
+        cols = ["Google Spending"]
+    elif any(k in cl for k in ("email", "sms")):
+        cols = ["SMS Spending"]
     else:
-        cl = sel_ch.lower()
-        if any(k in cl for k in ("social", "facebook", "meta", "instagram")):
-            col = "meta"
-        elif any(k in cl for k in ("search", "shopping", "display", "video", "pmax",
-                                   "performance max", "cross-network", "google", "paid")):
-            col = "google"
-        else:
-            return pd.Series(0.0, index=s.index)  # organic/direct/email → no ad spend
-    return s[col]
+        return pd.Series(0.0, index=s.index)  # organic/direct/referral → no ad spend
+    cols = [c for c in cols if c in s.columns]
+    if not cols:
+        return pd.Series(0.0, index=s.index)
+    return s[cols].sum(axis=1)
 
 
 def build_daily(ga, sp):
@@ -554,11 +556,40 @@ else:
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 st.markdown('</div>', unsafe_allow_html=True)
 
+# ── diagnostics (raw components so numbers can be sanity-checked) ──
+with st.expander("🔧 تشخيص الأرقام — Debug"):
+    dc1, dc2 = st.columns(2)
+    with dc1:
+        st.markdown("**الفترة الحالية**")
+        st.write({
+            "Marketing Spend (ج)": round(cur["spend"], 1),
+            "New Customers": int(cur["new"]),
+            "Unique Customers": int(cur["uniq"]),
+            "GMV (ج)": round(cur["gmv"], 1),
+            "CAC = Spend ÷ New": round(cur["cac"], 2),
+            "LTV = GMV ÷ Unique": round(cur["ltv"], 1),
+            "LTV:CAC": round(cur["ratio"], 2),
+        })
+    with dc2:
+        st.markdown("**الإنفاق من الشيت**")
+        brk = {"Total (ج)": round(float(sp_cur["total"].sum()), 1) if not sp_cur.empty else 0}
+        for c in ("Facebook Spending", "Google Spending", "TikTok Spending", "SMS Spending"):
+            if not sp_cur.empty and c in sp_cur.columns:
+                brk[c] = round(float(sp_cur[c].sum()), 1)
+        st.write(brk)
+        se = st.session_state.get("_sheet_errors", [])
+        if se:
+            st.caption("⚠️ Sheet: " + str(se[-1])[:160])
+        if sp_cur.empty or sp_cur["total"].sum() == 0:
+            st.error("الإنفاق = صفر من الشيت. اتأكد إن SALES_SHEET_CSV_URL مضبوط "
+                     "وإن الفترة فيها صفوف في الشيت.")
+
 # ── data-source footnote ──
 st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
 st.caption(
-    "المصادر: الإنفاق من Meta + Google Ads (حقل spend) · GMV والعملاء من GA4 "
-    f"(GMV=«{REV_COL or '—'}», عملاء جدد=«{NEW_COL or 'مشتق من شريحة New'}», "
-    f"عملاء فريدين=«{UNIQ_COL or '—'}»). فلتر القناة يربط الإنفاق المدفوع: Social→Meta، "
-    "Search/Shopping→Google، والقنوات العضوية إنفاقها = صفر."
+    "المصادر: الإنفاق من شيت المبيعات («Total Spending» — نفس مصدر الـ Executive Summary) · "
+    f"GMV والعملاء من GA4 (GMV=«{REV_COL or '—'}», عملاء جدد=«{NEW_COL or 'مشتق من شريحة New'}», "
+    f"عملاء فريدين=«{UNIQ_COL or '—'}»). فلتر القناة يربط الإنفاق: Social→Facebook+TikTok، "
+    "Search/Shopping→Google، Email→SMS، والقنوات العضوية إنفاقها = صفر. "
+    "فلتر المنصة (Web/App) والشريحة بيأثروا على جانب GA4 بس (الإنفاق مجمّع)."
 )
