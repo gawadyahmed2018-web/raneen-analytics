@@ -166,17 +166,19 @@ def fetch_ga(dfrom, dto):
 
 
 # Marketing spend comes from the finance sheet (same source as the Executive
-# Summary), NOT the live ad connectors — so numbers reconcile with finance.
-SHEET_TOTAL = "Total Spending"
-SHEET_CH_COLS = ["Facebook Spending", "Google Spending", "TikTok Spending",
-                 "SMS Spending", "Criteo Spending", "Coupons", "Extra Spending"]
+# Summary), NOT the live ad connectors. For CAC we count DIRECT PAID MEDIA only —
+# coupons/discounts and free-shipping/extra are promotions, not acquisition spend.
+MEDIA_COLS = ["Facebook Spending", "Google Spending", "TikTok Spending",
+              "Criteo Spending", "SMS Spending"]
+EXCLUDED_COLS = ["Coupons", "Extra Spending"]   # discounts + shipping → excluded
 
 
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_spend(dfrom, dto):
-    """Daily marketing spend from the sales sheet, sliced to the window.
+    """Daily DIRECT paid-media spend from the sales sheet, sliced to the window.
 
-    Returns df[date, total, <channel columns that exist>].
+    'total' = sum of paid media channels only (coupons/shipping excluded).
+    Also returns each channel column + an 'excluded' column for transparency.
     """
     df = load_sales_sheet()
     if df.empty or "Date" not in df.columns:
@@ -185,13 +187,15 @@ def fetch_spend(dfrom, dto):
     d["date"] = pd.to_datetime(d["Date"], errors="coerce")
     d = d.dropna(subset=["date"])
     d = d[(d["date"].dt.date >= dfrom) & (d["date"].dt.date <= dto)]
-    keep = [SHEET_TOTAL] + [c for c in SHEET_CH_COLS if c in d.columns]
-    keep = [c for c in keep if c in d.columns]
-    if SHEET_TOTAL not in keep:
+    media = [c for c in MEDIA_COLS if c in d.columns]
+    excl = [c for c in EXCLUDED_COLS if c in d.columns]
+    if not media:
         return pd.DataFrame(columns=["date", "total"])
-    for c in keep:
+    for c in media + excl:
         d[c] = pd.to_numeric(d[c], errors="coerce").fillna(0)
-    out = d.groupby("date", as_index=False)[keep].sum().rename(columns={SHEET_TOTAL: "total"})
+    out = d.groupby("date", as_index=False)[media + excl].sum()
+    out["total"] = out[media].sum(axis=1)                       # paid media only
+    out["excluded"] = out[excl].sum(axis=1) if excl else 0      # coupons + shipping
     return out
 
 
@@ -571,11 +575,14 @@ with st.expander("🔧 تشخيص الأرقام — Debug"):
             "LTV:CAC": round(cur["ratio"], 2),
         })
     with dc2:
-        st.markdown("**الإنفاق من الشيت**")
-        brk = {"Total (ج)": round(float(sp_cur["total"].sum()), 1) if not sp_cur.empty else 0}
-        for c in ("Facebook Spending", "Google Spending", "TikTok Spending", "SMS Spending"):
+        st.markdown("**الإنفاق المباشر من الشيت**")
+        brk = {"Media Total (ج)": round(float(sp_cur["total"].sum()), 1) if not sp_cur.empty else 0}
+        for c in ("Facebook Spending", "Google Spending", "TikTok Spending",
+                  "Criteo Spending", "SMS Spending"):
             if not sp_cur.empty and c in sp_cur.columns:
                 brk[c] = round(float(sp_cur[c].sum()), 1)
+        if not sp_cur.empty and "excluded" in sp_cur.columns:
+            brk["مستبعد (كوبونات+شحن)"] = round(float(sp_cur["excluded"].sum()), 1)
         st.write(brk)
         se = st.session_state.get("_sheet_errors", [])
         if se:
@@ -587,9 +594,10 @@ with st.expander("🔧 تشخيص الأرقام — Debug"):
 # ── data-source footnote ──
 st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
 st.caption(
-    "المصادر: الإنفاق من شيت المبيعات («Total Spending» — نفس مصدر الـ Executive Summary) · "
-    f"GMV والعملاء من GA4 (GMV=«{REV_COL or '—'}», عملاء جدد=«{NEW_COL or 'مشتق من شريحة New'}», "
-    f"عملاء فريدين=«{UNIQ_COL or '—'}»). فلتر القناة يربط الإنفاق: Social→Facebook+TikTok، "
-    "Search/Shopping→Google، Email→SMS، والقنوات العضوية إنفاقها = صفر. "
-    "فلتر المنصة (Web/App) والشريحة بيأثروا على جانب GA4 بس (الإنفاق مجمّع)."
+    "المصادر: الإنفاق الإعلاني المباشر من شيت المبيعات (Meta+Google+TikTok+Criteo+SMS — "
+    "الكوبونات والشحن مستبعدين) · GMV والعملاء من GA4 "
+    f"(GMV=«{REV_COL or '—'}», عملاء جدد=«{NEW_COL or 'مشتق من شريحة New'}», "
+    f"عملاء فريدين=«{UNIQ_COL or '—'}»). فلتر القناة: Social→Facebook+TikTok، "
+    "Search/Shopping→Google، Email→SMS، والعضوي إنفاقه = صفر. "
+    "فلتر المنصة (Web/App) والشريحة بيأثروا على جانب GA4 بس."
 )
